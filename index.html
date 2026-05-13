@@ -1,0 +1,1342 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GitHub Deploy Tool</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0d1117;
+      --bg2: #161b22;
+      --bg3: #21262d;
+      --border: #30363d;
+      --text: #e6edf3;
+      --text2: #8b949e;
+      --green: #3fb950;
+      --green-dim: #1a4223;
+      --blue: #58a6ff;
+      --blue-dim: #1a2d4a;
+      --red: #f85149;
+      --red-dim: #3d1a1a;
+      --yellow: #d29922;
+      --yellow-dim: #2d2107;
+      --accent: #58a6ff;
+      --radius: 8px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Noto Sans JP', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* タイトルバー */
+    .titlebar {
+      height: 38px;
+      background: var(--bg2);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      -webkit-app-region: drag;
+      flex-shrink: 0;
+    }
+    .titlebar-icon {
+      width: 16px;
+      height: 16px;
+      margin-right: 8px;
+    }
+    .titlebar-title {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: var(--text2);
+      letter-spacing: 0.05em;
+    }
+    .titlebar-title span { color: var(--blue); }
+    .titlebar-spacer { flex: 1; }
+    .window-controls {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-left: auto;
+      -webkit-app-region: no-drag;
+    }
+    .window-btn {
+      width: 28px;
+      height: 28px;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text2);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    .window-btn:hover {
+      background: var(--bg3);
+      color: var(--text);
+      border-color: var(--border);
+    }
+    .window-btn.close:hover {
+      background: var(--red-dim);
+      color: #fff;
+      border-color: rgba(248, 81, 73, 0.4);
+    }
+    .window-btn svg { pointer-events: none; }
+
+    /* メインレイアウト */
+    .layout {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* サイドバー */
+    .sidebar {
+      width: 200px;
+      background: var(--bg2);
+      border-right: 1px solid var(--border);
+      padding: 16px 0;
+      flex-shrink: 0;
+    }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      cursor: pointer;
+      font-size: 13px;
+      color: var(--text2);
+      border-left: 2px solid transparent;
+      transition: all 0.15s;
+    }
+    .nav-item:hover { background: var(--bg3); color: var(--text); }
+    .nav-item.active {
+      color: var(--blue);
+      border-left-color: var(--blue);
+      background: var(--blue-dim);
+    }
+    .nav-item .step-num {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: var(--bg3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+      flex-shrink: 0;
+    }
+    .nav-item.active .step-num { background: var(--blue); color: #fff; }
+    .nav-item.done .step-num { background: var(--green); color: #fff; }
+    .nav-item.done { color: var(--green); }
+
+    /* コンテンツエリア */
+    .content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 28px 32px;
+    }
+
+    .page { display: none; }
+    .page.active { display: block; }
+
+    h2 {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .page-desc {
+      font-size: 13px;
+      color: var(--text2);
+      margin-bottom: 24px;
+    }
+
+    /* カード */
+    .card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+
+    /* ステータスバッジ */
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .status-badge.success { background: var(--green-dim); color: var(--green); }
+    .status-badge.error { background: var(--red-dim); color: var(--red); }
+    .status-badge.warning { background: var(--yellow-dim); color: var(--yellow); }
+    .status-badge.info { background: var(--blue-dim); color: var(--blue); }
+
+    /* ボタン */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 16px;
+      border-radius: var(--radius);
+      border: none;
+      font-size: 13px;
+      font-family: 'Noto Sans JP', sans-serif;
+      cursor: pointer;
+      transition: all 0.15s;
+      font-weight: 500;
+    }
+    .btn-primary { background: var(--blue); color: #fff; }
+    .btn-primary:hover { background: #79b8ff; }
+    .btn-success { background: var(--green); color: #fff; }
+    .btn-success:hover { background: #56d364; }
+    .btn-danger { background: var(--red); color: #fff; }
+    .btn-danger:hover { background: #ff7b72; }
+    .btn-secondary { background: var(--bg3); color: var(--text); border: 1px solid var(--border); }
+    .btn-secondary:hover { background: #30363d; }
+    .btn-folder {
+      background: linear-gradient(135deg, #238636 0%, #2ea043 100%);
+      color: #fff;
+      border: 1px solid rgba(63, 185, 80, 0.45);
+      box-shadow: 0 10px 24px rgba(46, 160, 67, 0.18);
+    }
+    .btn-folder:hover { background: linear-gradient(135deg, #2ea043 0%, #3fb950 100%); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-lg { padding: 12px 24px; font-size: 15px; }
+
+    /* フォーム */
+    .form-group { margin-bottom: 16px; }
+    label {
+      display: block;
+      font-size: 12px;
+      color: var(--text2);
+      margin-bottom: 6px;
+      font-weight: 500;
+    }
+    input[type="text"], select {
+      width: 100%;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 8px 12px;
+      color: var(--text);
+      font-size: 13px;
+      font-family: 'JetBrains Mono', monospace;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input[type="text"]:focus, select:focus { border-color: var(--blue); }
+    select option { background: var(--bg3); }
+
+    /* ターミナル風ログ */
+    .terminal {
+      background: #010409;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      line-height: 1.8;
+      max-height: 200px;
+      overflow-y: auto;
+      color: var(--green);
+    }
+    .terminal .log-line { margin: 2px 0; }
+    .terminal .log-error { color: var(--red); }
+    .terminal .log-info { color: var(--blue); }
+    .terminal .log-warn { color: var(--yellow); }
+
+    /* フォルダパス表示 */
+    .path-display {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px 14px;
+    }
+    .path-display .path-text {
+      flex: 1;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: var(--text2);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .path-display .path-text.set { color: var(--text); }
+
+    /* リポジトリリスト */
+    .repo-list { display: flex; flex-direction: column; gap: 8px; max-height: min(520px, 62vh); overflow-y: auto; }
+    .repo-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .repo-item:hover { border-color: var(--blue); }
+    .repo-item.selected { border-color: var(--blue); background: var(--blue-dim); }
+    .repo-name { font-family: 'JetBrains Mono', monospace; font-size: 13px; }
+    .repo-private { font-size: 11px; color: var(--text2); }
+
+    /* プログレスステップ */
+    .progress-steps { display: flex; gap: 8px; margin-bottom: 24px; }
+    .progress-step {
+      flex: 1;
+      height: 4px;
+      background: var(--bg3);
+      border-radius: 2px;
+      transition: background 0.3s;
+    }
+    .progress-step.done { background: var(--green); }
+    .progress-step.active { background: var(--blue); }
+
+    /* アカウント情報表示 */
+    .account-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 16px;
+      background: var(--green-dim);
+      border: 1px solid var(--green);
+      border-radius: var(--radius);
+      margin-bottom: 16px;
+    }
+    .check-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .check-item {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 12px;
+    }
+    .check-main { min-width: 0; }
+    .check-name { font-weight: 600; color: var(--text); }
+    .check-output {
+      color: var(--text2);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      word-break: break-all;
+      margin-top: 2px;
+    }
+    .check-link {
+      color: var(--blue);
+      text-decoration: none;
+      font-size: 11px;
+      flex-shrink: 0;
+    }
+    .device-code-card {
+      display: none;
+      margin-top: 16px;
+      padding: 16px;
+      background: var(--blue-dim);
+      border: 1px solid rgba(88, 166, 255, 0.35);
+      border-radius: var(--radius);
+    }
+    .device-code-label {
+      font-size: 12px;
+      color: var(--text2);
+      margin-bottom: 8px;
+    }
+    .device-code-value {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      color: #fff;
+      margin-bottom: 8px;
+    }
+    .device-code-url {
+      color: var(--blue);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      word-break: break-all;
+    }
+    .account-avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: var(--green);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 16px;
+      color: #fff;
+      flex-shrink: 0;
+    }
+    .account-name { font-weight: 700; font-size: 14px; }
+    .account-label { font-size: 11px; color: var(--text2); }
+
+    /* トグル */
+    .toggle-group { display: flex; gap: 8px; }
+    .toggle-btn {
+      flex: 1;
+      padding: 8px;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text2);
+      cursor: pointer;
+      text-align: center;
+      font-size: 13px;
+      transition: all 0.15s;
+    }
+    .toggle-btn.active { background: var(--blue-dim); border-color: var(--blue); color: var(--blue); }
+    .deploy-mode-title { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+    .deploy-mode-desc { font-size: 11px; color: var(--text2); line-height: 1.5; }
+
+    /* フッターアクション */
+    .footer-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 24px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+    }
+
+    /* ファイルリスト */
+    .file-list { display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow-y: auto; margin-top: 8px; }
+    .file-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 7px 12px;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 12px;
+      font-family: 'JetBrains Mono', monospace;
+      transition: background 0.1s;
+    }
+    .file-item:hover { background: #2d333b; }
+    .file-item input[type="checkbox"] { accent-color: var(--blue); width: 14px; height: 14px; cursor: pointer; flex-shrink: 0; }
+    .file-item .file-icon { font-size: 14px; flex-shrink: 0; }
+    .file-item .file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .file-item .file-ignored { color: var(--text2); font-size: 11px; margin-left: auto; flex-shrink: 0; }
+    .file-item.ignored { opacity: 0.45; }
+
+    /* gitignoreエディタ */
+    textarea {
+      width: 100%;
+      background: #010409;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+      color: var(--green);
+      font-size: 12px;
+      font-family: 'JetBrains Mono', monospace;
+      resize: vertical;
+      outline: none;
+      line-height: 1.6;
+    }
+    textarea:focus { border-color: var(--blue); }
+
+    /* アニメーション */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinning { animation: spin 1s linear infinite; display: inline-block; }
+
+    /* スクロールバー */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<div class="titlebar">
+  <svg class="titlebar-icon" viewBox="0 0 16 16" fill="#8b949e">
+    <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+  </svg>
+  <span class="titlebar-title">GitHub <span>Deploy</span> Tool</span>
+  <div class="titlebar-spacer"></div>
+  <div class="window-controls">
+    <button class="window-btn" onclick="minimizeWindow()" title="最小化" aria-label="最小化">
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6">
+        <path d="M1 5h8"/>
+      </svg>
+    </button>
+    <button class="window-btn" id="btn-window-toggle" onclick="toggleMaximizeWindow()" title="最大化" aria-label="最大化">
+      <svg id="window-toggle-icon" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.3">
+        <rect x="1.5" y="1.5" width="7" height="7"/>
+      </svg>
+    </button>
+    <button class="window-btn close" onclick="closeWindow()" title="閉じる" aria-label="閉じる">
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6">
+        <path d="M1 1l8 8M9 1L1 9"/>
+      </svg>
+    </button>
+  </div>
+</div>
+
+<div class="layout">
+  <div class="sidebar">
+    <div class="nav-item active" data-page="auth" onclick="goTo('auth')">
+      <span class="step-num">1</span>
+      <span>アカウント</span>
+    </div>
+    <div class="nav-item" data-page="repo" onclick="goTo('repo')">
+      <span class="step-num">2</span>
+      <span>リポジトリ</span>
+    </div>
+    <div class="nav-item" data-page="folder" onclick="goTo('folder')">
+      <span class="step-num">3</span>
+      <span>フォルダ選択</span>
+    </div>
+    <div class="nav-item" data-page="deploy" onclick="goTo('deploy')">
+      <span class="step-num">4</span>
+      <span>デプロイ</span>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- Step 1: Auth -->
+    <div class="page active" id="page-auth">
+      <h2>🔐 GitHubアカウント</h2>
+      <p class="page-desc">接続中のGitHubアカウントを確認・切り替えします</p>
+
+      <div id="auth-status-area">
+        <div class="card" style="text-align:center; padding:32px;">
+          <p style="color:var(--text2); font-size:13px;">⏳ アカウント情報を確認中...</p>
+        </div>
+      </div>
+
+      <div class="card" id="env-check-card" style="display:none;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+          <div>
+            <div style="font-size:14px; font-weight:700;">起動・デプロイに必要な環境</div>
+            <div style="font-size:12px; color:var(--text2); margin-top:4px;">
+              起動方法: <span style="font-family:'JetBrains Mono',monospace;">npm start</span>
+              / 簡易起動: <span style="font-family:'JetBrains Mono',monospace;">起動.bat</span>
+            </div>
+          </div>
+          <span id="env-check-badge" class="status-badge info">確認中</span>
+        </div>
+        <div id="env-check-list" class="check-list"></div>
+      </div>
+
+      <div class="device-code-card" id="device-code-card">
+        <div class="device-code-label">GitHub の確認コード</div>
+        <div class="device-code-value" id="device-code-value">----</div>
+        <div style="font-size:12px; color:var(--text2); margin-bottom:4px;">認証ページを自動で開きます。開けない場合は以下にアクセスしてください。</div>
+        <div class="device-code-url" id="device-code-url">https://github.com/login/device</div>
+      </div>
+
+      <div id="auth-log" class="terminal" style="display:none; margin-top:16px;"></div>
+
+      <div class="footer-actions">
+        <button class="btn btn-danger" id="btn-logout" onclick="doLogout()" style="display:none">ログアウト</button>
+        <button class="btn btn-primary" id="btn-login" onclick="doLogin()" style="display:none">
+          ブラウザでログイン
+        </button>
+        <button class="btn btn-success" id="btn-next-repo" onclick="goTo('repo')" style="display:none">
+          次へ：リポジトリ選択 →
+        </button>
+      </div>
+    </div>
+
+    <!-- Step 2: Repository -->
+    <div class="page" id="page-repo">
+      <h2>📁 リポジトリ</h2>
+      <p class="page-desc">デプロイ先のリポジトリを選択または新規作成します</p>
+
+      <div class="toggle-group" style="margin-bottom:20px;">
+        <div class="toggle-btn active" id="tab-select" onclick="switchRepoTab('select')">既存を選択</div>
+        <div class="toggle-btn" id="tab-create" onclick="switchRepoTab('create')">新規作成</div>
+      </div>
+
+      <!-- 既存選択 -->
+      <div id="repo-select-panel">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+          <label style="margin:0">リポジトリ一覧</label>
+          <button class="btn btn-secondary" onclick="loadRepos()" style="padding:4px 10px; font-size:12px;">🔄 更新</button>
+        </div>
+        <div class="repo-list" id="repo-list">
+          <div style="text-align:center; padding:20px; color:var(--text2); font-size:13px;">読み込み中...</div>
+        </div>
+      </div>
+
+      <!-- 新規作成 -->
+      <div id="repo-create-panel" style="display:none;">
+        <div class="form-group">
+          <label>リポジトリ名</label>
+          <input type="text" id="new-repo-name" placeholder="my-new-repo">
+        </div>
+        <div class="form-group">
+          <label>公開設定</label>
+          <div class="toggle-group">
+            <div class="toggle-btn active" id="vis-public" onclick="setVisibility('public')">🌐 Public</div>
+            <div class="toggle-btn" id="vis-private" onclick="setVisibility('private')">🔒 Private</div>
+          </div>
+        </div>
+        <button class="btn btn-success" onclick="createRepo()">リポジトリを作成</button>
+        <div id="create-result" style="margin-top:12px;"></div>
+      </div>
+
+      <div class="footer-actions">
+        <button class="btn btn-secondary" onclick="goTo('auth')">← 戻る</button>
+        <button class="btn btn-primary" id="btn-next-folder" onclick="goTo('folder')" disabled>
+          次へ：フォルダ選択 →
+        </button>
+      </div>
+    </div>
+
+    <!-- Step 3: Folder -->
+    <div class="page" id="page-folder">
+      <h2>📂 ローカルフォルダ</h2>
+      <p class="page-desc">デプロイするプロジェクトフォルダを選択し、含めるファイルを指定します</p>
+
+      <!-- フォルダ選択 -->
+      <div class="card">
+        <label style="margin-bottom:10px; display:block;">プロジェクトフォルダ</label>
+        <div class="path-display">
+          <span style="font-size:18px;">📁</span>
+          <span class="path-text" id="selected-path">フォルダが選択されていません</span>
+          <button class="btn btn-folder" onclick="selectFolder()" style="flex-shrink:0;">参照...</button>
+        </div>
+      </div>
+
+      <!-- ① ファイル選択 -->
+      <div id="file-select-card" class="card" style="display:none;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+          <label style="margin:0;">📋 デプロイに含めるファイル</label>
+          <div style="display:flex; gap:6px;">
+            <button class="btn btn-secondary" onclick="checkAllFiles(true)" style="padding:4px 10px; font-size:11px;">全選択</button>
+            <button class="btn btn-secondary" onclick="checkAllFiles(false)" style="padding:4px 10px; font-size:11px;">全解除</button>
+          </div>
+        </div>
+        <label style="display:flex; align-items:center; gap:8px; margin-bottom:10px; color:var(--text); font-size:12px;">
+          <input type="checkbox" id="exclude-japanese-toggle" onchange="toggleJapaneseExclusion(this.checked)">
+          ファイル名が日本語のものを除外
+        </label>
+        <div class="file-list" id="file-list"></div>
+        <div style="margin-top:8px; font-size:11px; color:var(--text2);">
+          ⚠ .gitignoreに含まれるファイルは薄く表示されます（デプロイから除外されます）
+        </div>
+      </div>
+
+      <!-- ② .gitignore -->
+      <div id="gitignore-card" class="card" style="display:none;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <label style="margin:0;">.gitignore</label>
+            <span id="gitignore-badge"></span>
+          </div>
+          <div style="display:flex; gap:6px;">
+            <button class="btn btn-secondary" onclick="addCommonIgnores()" style="padding:4px 10px; font-size:11px;">定番パターン追加</button>
+            <button class="btn btn-success" onclick="saveGitignore()" style="padding:4px 10px; font-size:11px;">💾 保存</button>
+          </div>
+        </div>
+        <textarea id="gitignore-content" rows="6" placeholder="例：node_modules/&#10;.env&#10;dist/"></textarea>
+        <div id="gitignore-save-result" style="margin-top:6px;"></div>
+      </div>
+
+      <div class="footer-actions">
+        <button class="btn btn-secondary" onclick="goTo('repo')">← 戻る</button>
+        <button class="btn btn-primary" id="btn-next-deploy" onclick="goTo('deploy')" disabled>
+          次へ：デプロイ設定 →
+        </button>
+      </div>
+    </div>
+
+    <!-- Step 4: Deploy -->
+    <div class="page" id="page-deploy">
+      <h2>🚀 デプロイ</h2>
+      <p class="page-desc">設定を確認してGitHubにプッシュします</p>
+
+      <!-- 確認サマリー -->
+      <div class="card" id="deploy-summary">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; font-size:13px;">
+          <div>
+            <div style="color:var(--text2); margin-bottom:4px;">アカウント</div>
+            <div id="sum-account" style="font-family:'JetBrains Mono',monospace;">-</div>
+          </div>
+          <div>
+            <div style="color:var(--text2); margin-bottom:4px;">リポジトリ</div>
+            <div id="sum-repo" style="font-family:'JetBrains Mono',monospace; word-break:break-all;">-</div>
+          </div>
+          <div>
+            <div style="color:var(--text2); margin-bottom:4px;">フォルダ</div>
+            <div id="sum-folder" style="font-family:'JetBrains Mono',monospace; font-size:11px; word-break:break-all;">-</div>
+          </div>
+          <div>
+            <div style="color:var(--text2); margin-bottom:4px;">ブランチ</div>
+            <div id="sum-branch" style="font-family:'JetBrains Mono',monospace;">main</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>コミットメッセージ</label>
+        <input type="text" id="commit-message" value="Initial commit" placeholder="変更内容を入力...">
+      </div>
+
+      <div class="form-group">
+        <label>ブランチ名</label>
+        <input type="text" id="branch-name" value="main">
+      </div>
+
+      <div class="form-group">
+        <label>プッシュ方式</label>
+        <div class="toggle-group">
+          <div class="toggle-btn active" id="mode-preserve" onclick="setDeployMode('preserve')">
+            <div class="deploy-mode-title">履歴を保持</div>
+            <div class="deploy-mode-desc">リモート履歴を取り込んでから通常 push</div>
+          </div>
+          <div class="toggle-btn" id="mode-force" onclick="setDeployMode('force')">
+            <div class="deploy-mode-title">force push</div>
+            <div class="deploy-mode-desc">従来どおりリモートを強制上書き</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-bottom:16px;">
+        <button class="btn btn-success btn-lg" id="btn-deploy" onclick="doDeploy()">
+          🚀 デプロイ実行
+        </button>
+      </div>
+
+      <div id="deploy-log-wrapper" style="display:none; position:relative;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+          <span style="font-size:12px; color:var(--text2); font-family:'JetBrains Mono',monospace;">ログ出力</span>
+          <button onclick="clearDeployLog()" style="background:none; border:none; color:var(--text2); cursor:pointer; font-size:16px; padding:2px 6px; border-radius:4px;" title="ログを閉じる">✕</button>
+        </div>
+        <div id="deploy-log" class="terminal"></div>
+      </div>
+
+      <div id="deploy-result" style="margin-top:16px;"></div>
+
+      <div class="footer-actions">
+        <button class="btn btn-secondary" onclick="goTo('folder')">← 戻る</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// アプリ状態
+const state = {
+  account: null,
+  selectedRepo: null,
+  selectedRepoUrl: null,
+  selectedFolder: null,
+  repoVisibility: 'public',
+  deployMode: 'preserve',
+  excludeJapaneseFiles: false,
+  steps: { auth: false, repo: false, folder: false }
+};
+
+function minimizeWindow() {
+  window.api.windowMinimize();
+}
+
+async function toggleMaximizeWindow() {
+  const result = await window.api.windowToggleMaximize();
+  updateWindowToggleButton(result.isMaximized);
+}
+
+function closeWindow() {
+  window.api.windowClose();
+}
+
+function updateWindowToggleButton(isMaximized) {
+  const btn = document.getElementById('btn-window-toggle');
+  const icon = document.getElementById('window-toggle-icon');
+  btn.title = isMaximized ? '元に戻す' : '最大化';
+  btn.setAttribute('aria-label', isMaximized ? '元に戻す' : '最大化');
+  icon.innerHTML = isMaximized
+    ? '<path d="M3 1.5h5.5V7"/><path d="M7 3H1.5v5.5"/>'
+    : '<rect x="1.5" y="1.5" width="7" height="7"/>';
+}
+
+function renderEnvironmentCheck(result) {
+  const card = document.getElementById('env-check-card');
+  const badge = document.getElementById('env-check-badge');
+  const list = document.getElementById('env-check-list');
+  card.style.display = 'block';
+
+  if (!result.success) {
+    badge.className = 'status-badge error';
+    badge.textContent = '確認失敗';
+    list.innerHTML = '<div class="check-item"><div class="check-main"><div class="check-name">環境確認に失敗しました</div></div></div>';
+    return;
+  }
+
+  const missing = result.checks.filter(check => !check.installed);
+  badge.className = 'status-badge ' + (missing.length ? 'warning' : 'success');
+  badge.textContent = missing.length ? ('不足 ' + missing.length + '件') : '準備完了';
+
+  list.innerHTML = result.checks.map(check => `
+    <div class="check-item">
+      <div class="check-main">
+        <div class="check-name">${check.installed ? '✓' : '⚠'} ${check.name}</div>
+        <div class="check-output">${check.output || '確認結果なし'}</div>
+      </div>
+      ${!check.installed ? `<a class="check-link" href="${check.url}" target="_blank" rel="noopener">ダウンロード</a>` : ''}
+    </div>
+  `).join('');
+}
+
+function updateDeviceCodeInfo(data) {
+  const card = document.getElementById('device-code-card');
+  if (!data || (!data.code && !data.url)) return;
+  card.style.display = 'block';
+  if (data.code) document.getElementById('device-code-value').textContent = data.code;
+  if (data.url) document.getElementById('device-code-url').textContent = data.url;
+}
+
+// ページ遷移
+function goTo(page) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + page).classList.add('active');
+  document.querySelector(`[data-page="${page}"]`).classList.add('active');
+
+  if (page === 'deploy') updateDeploySummary();
+  if (page === 'repo') loadRepos();
+}
+
+// ===== Step 1: Auth =====
+async function checkAuth() {
+  const result = await window.api.ghAuthStatus();
+  const area = document.getElementById('auth-status-area');
+
+  if (result.success && result.output.includes('Logged in')) {
+    const match = result.output.match(/account (\S+)/);
+    const accountName = match ? match[1] : 'Unknown';
+    state.account = accountName;
+
+    area.innerHTML = `
+      <div class="account-info">
+        <div class="account-avatar">${accountName[0].toUpperCase()}</div>
+        <div>
+          <div class="account-name">${accountName}</div>
+          <div class="account-label">github.com に接続済み</div>
+        </div>
+        <span class="status-badge success" style="margin-left:auto">✓ 接続中</span>
+      </div>
+    `;
+    document.getElementById('btn-logout').style.display = 'inline-flex';
+    document.getElementById('btn-login').style.display = 'none';
+    document.getElementById('btn-next-repo').style.display = 'inline-flex';
+    markStepDone('auth');
+  } else {
+    area.innerHTML = `
+      <div class="card" style="text-align:center; padding:32px;">
+        <p style="font-size:32px; margin-bottom:12px;">🔓</p>
+        <p style="color:var(--text2); font-size:14px; margin-bottom:16px;">GitHubアカウントに接続されていません</p>
+        <span class="status-badge error">✗ 未接続</span>
+      </div>
+    `;
+    document.getElementById('btn-login').style.display = 'inline-flex';
+    document.getElementById('btn-logout').style.display = 'none';
+    document.getElementById('btn-next-repo').style.display = 'none';
+  }
+}
+
+async function doLogout() {
+  if (!confirm('ログアウトしますか？')) return;
+  await window.api.ghAuthLogout();
+  state.account = null;
+  checkAuth();
+}
+
+async function doLogin() {
+  const logDiv = document.getElementById('auth-log');
+  logDiv.style.display = 'block';
+  logDiv.innerHTML = '';
+  document.getElementById('device-code-card').style.display = 'none';
+  document.getElementById('device-code-value').textContent = '----';
+  document.getElementById('device-code-url').textContent = 'https://github.com/login/device';
+  document.getElementById('btn-login').disabled = true;
+  document.getElementById('btn-login').innerHTML = '<span class="spinning">⟳</span> ブラウザを起動中...';
+
+  window.api.onAuthProgress((data) => {
+    const line = document.createElement('div');
+    line.className = 'log-line';
+    line.textContent = data;
+    logDiv.appendChild(line);
+    logDiv.scrollTop = logDiv.scrollHeight;
+  });
+  window.api.onAuthDeviceCode((data) => updateDeviceCodeInfo(data));
+
+  const result = await window.api.ghAuthLogin();
+  document.getElementById('btn-login').disabled = false;
+  document.getElementById('btn-login').innerHTML = 'ブラウザでログイン';
+
+  if (result.success) {
+    const setupResult = await window.api.ghAuthSetupGit();
+    const line = document.createElement('div');
+    line.className = 'log-line';
+    line.textContent = setupResult.success
+      ? 'Git認証連携を設定しました'
+      : `Git認証連携の設定に失敗: ${setupResult.error || '不明なエラー'}`;
+    logDiv.appendChild(line);
+    logDiv.scrollTop = logDiv.scrollHeight;
+  }
+
+  await checkAuth();
+}
+
+// ===== Step 2: Repo =====
+let repoTabMode = 'select';
+
+function switchRepoTab(mode) {
+  repoTabMode = mode;
+  document.getElementById('repo-select-panel').style.display = mode === 'select' ? 'block' : 'none';
+  document.getElementById('repo-create-panel').style.display = mode === 'create' ? 'block' : 'none';
+  document.getElementById('tab-select').classList.toggle('active', mode === 'select');
+  document.getElementById('tab-create').classList.toggle('active', mode === 'create');
+}
+
+function setVisibility(v) {
+  state.repoVisibility = v;
+  document.getElementById('vis-public').classList.toggle('active', v === 'public');
+  document.getElementById('vis-private').classList.toggle('active', v === 'private');
+}
+
+async function loadRepos() {
+  const list = document.getElementById('repo-list');
+  list.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text2);font-size:13px;">⏳ 読み込み中...</div>';
+
+  const result = await window.api.ghRepoList();
+  if (!result.success) {
+    list.innerHTML = `<div style="text-align:center;padding:20px;color:var(--red);font-size:13px;">取得に失敗しました<br><span style="color:var(--text2);">${escapeHtml(result.error || 'GitHub 認証を確認してください')}</span></div>`;
+    return;
+  }
+
+  if (!result.repos.length) {
+    list.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text2);font-size:13px;">push 権限のあるリポジトリが見つかりません</div>';
+    return;
+  }
+
+  list.innerHTML = '';
+  result.repos.forEach(repo => {
+    const item = document.createElement('div');
+    item.className = 'repo-item';
+    const displayName = repo.nameWithOwner || repo.name;
+    item.innerHTML = `
+      <div>
+        <div class="repo-name">${escapeHtml(displayName)}</div>
+        <div class="repo-private">${escapeHtml(repo.url)}</div>
+      </div>
+      <span class="status-badge ${repo.isPrivate ? 'warning' : 'info'}">${repo.isPrivate ? '🔒 Private' : '🌐 Public'}</span>
+    `;
+    item.onclick = () => selectRepo(repo, item);
+    list.appendChild(item);
+  });
+}
+
+function selectRepo(repo, el) {
+  document.querySelectorAll('.repo-item').forEach(i => i.classList.remove('selected'));
+  el.classList.add('selected');
+  state.selectedRepo = repo.nameWithOwner || repo.name;
+  state.selectedRepoUrl = repo.url + '.git';
+  document.getElementById('btn-next-folder').disabled = false;
+  markStepDone('repo');
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+async function createRepo() {
+  const name = document.getElementById('new-repo-name').value.trim();
+  if (!name) { alert('リポジトリ名を入力してください'); return; }
+
+  const result = await window.api.ghRepoCreate({ name, isPrivate: state.repoVisibility === 'private' });
+  const div = document.getElementById('create-result');
+
+  if (result.success) {
+    div.innerHTML = `<span class="status-badge success">✓ 作成完了: ${name}</span>`;
+    state.selectedRepo = name;
+    state.selectedRepoUrl = `https://github.com/${state.account}/${name}.git`;
+    document.getElementById('btn-next-folder').disabled = false;
+    markStepDone('repo');
+  } else {
+    div.innerHTML = `<span class="status-badge error">✗ ${result.error}</span>`;
+  }
+}
+
+// ===== Step 3: Folder =====
+let ignoredFiles = new Set();
+const DEFAULT_GITIGNORE = [
+  'node_modules/',
+  '.env',
+  '.env.local',
+  '.DS_Store',
+  'dist/',
+  'build/',
+  'publish/',
+  'Publish/',
+  'パブリッシュ/',
+  'published/',
+  'release/',
+  'releases/',
+  'out/',
+  'bin/',
+  'obj/',
+  '*.exe',
+  '*.EXE',
+  '*.msi',
+  '*.zip',
+  '*.log',
+  '*.tmp'
+].join('\n') + '\n';
+
+async function selectFolder() {
+  const result = await window.api.selectFolder();
+  if (!result.success) return;
+
+  state.selectedFolder = result.path;
+  const pathEl = document.getElementById('selected-path');
+  pathEl.textContent = result.path;
+  pathEl.classList.add('set');
+
+  // gitignore確認・読み込み
+  await loadGitignore();
+
+  // ファイル一覧読み込み
+  await loadFileList();
+
+  document.getElementById('btn-next-deploy').disabled = false;
+  markStepDone('folder');
+}
+
+async function loadGitignore() {
+  const card = document.getElementById('gitignore-card');
+  card.style.display = 'block';
+
+  const result = await window.api.checkGitignore({ folderPath: state.selectedFolder });
+  const badge = document.getElementById('gitignore-badge');
+  const textarea = document.getElementById('gitignore-content');
+
+  if (result.exists) {
+    badge.innerHTML = '<span class="status-badge success">✓ 既存</span>';
+    textarea.value = result.content;
+  } else {
+    badge.innerHTML = '<span class="status-badge warning">⚠ なし（新規作成）</span>';
+    textarea.value = DEFAULT_GITIGNORE;
+    // 自動保存
+    await window.api.saveGitignore({ folderPath: state.selectedFolder, content: textarea.value });
+    document.getElementById('gitignore-save-result').innerHTML =
+      '<span class="status-badge info">📝 .gitignoreを自動作成しました</span>';
+  }
+
+  // 無視パターンを解析
+  parseIgnorePatterns(textarea.value);
+
+  // textareaの変更時にリアルタイム更新
+  textarea.oninput = () => {
+    parseIgnorePatterns(textarea.value);
+    refreshFileListIgnoreState();
+  };
+}
+
+function parseIgnorePatterns(content) {
+  ignoredFiles = new Set();
+  const lines = content.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
+  window._ignorePatterns = lines.map(line => ({
+    raw: line,
+    pattern: line.replace(/^\//, '').replace(/\/$/, ''),
+    directoryOnly: line.endsWith('/'),
+    negated: line.startsWith('!')
+  })).filter(item => !item.negated);
+}
+
+function isIgnored(fileName) {
+  if (!window._ignorePatterns) return false;
+  return window._ignorePatterns.some(pattern => {
+    const value = pattern.pattern;
+    if (!value) return false;
+    if (value.includes('*')) {
+      const regex = new RegExp('^' + value
+        .split('*')
+        .map(part => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
+        .join('.*') + '$');
+      return regex.test(fileName);
+    }
+    if (pattern.directoryOnly) {
+      return fileName === value || fileName.startsWith(value + '/');
+    }
+    if (fileName === value) return true;
+    if (fileName.startsWith(value + '/')) return true;
+    return false;
+  });
+}
+
+function hasJapaneseName(fileName) {
+  return /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uff66-\uff9f]/.test(fileName);
+}
+
+async function loadFileList() {
+  const card = document.getElementById('file-select-card');
+  card.style.display = 'block';
+  document.getElementById('exclude-japanese-toggle').checked = state.excludeJapaneseFiles;
+
+  const result = await window.api.getFileList({ folderPath: state.selectedFolder });
+  if (!result.success) return;
+
+  state.fileList = result.files;
+  renderFileList(result.files);
+}
+
+function renderFileList(files) {
+  const list = document.getElementById('file-list');
+  list.innerHTML = '';
+
+  // .gitフォルダは除外
+  const filtered = files.filter(f => f.name !== '.git');
+
+  filtered.forEach(file => {
+    const ignoredByGitignore = isIgnored(file.name);
+    const ignoredByJapanese = state.excludeJapaneseFiles && (file.hasJapaneseName || hasJapaneseName(file.name));
+    const ignored = ignoredByGitignore || ignoredByJapanese;
+    const item = document.createElement('div');
+    item.className = 'file-item' + (ignored ? ' ignored' : '');
+    item.dataset.filename = file.name;
+
+    const icon = file.isHidden ? '🔒' : file.isDir ? '📁' : '📄';
+
+    item.innerHTML = `
+      <input type="checkbox" ${ignored ? '' : 'checked'} ${ignored ? 'disabled' : ''}
+        onchange="onFileCheck('${file.name}', this.checked)">
+      <span class="file-icon">${icon}</span>
+      <span class="file-name">${file.name}</span>
+      ${ignoredByJapanese
+        ? '<span class="file-ignored">日本語名のため除外</span>'
+        : ignoredByGitignore ? '<span class="file-ignored">gitignore対象</span>' : ''}
+    `;
+    list.appendChild(item);
+  });
+}
+
+function refreshFileListIgnoreState() {
+  const items = document.querySelectorAll('.file-item');
+  items.forEach(item => {
+    const name = item.dataset.filename;
+    const ignoredByGitignore = isIgnored(name);
+    const ignoredByJapanese = state.excludeJapaneseFiles && hasJapaneseName(name);
+    const ignored = ignoredByGitignore || ignoredByJapanese;
+    const cb = item.querySelector('input[type="checkbox"]');
+    item.classList.toggle('ignored', ignored);
+    cb.disabled = ignored;
+    if (ignored) cb.checked = false;
+
+    let ignoredLabel = item.querySelector('.file-ignored');
+    if (ignored && !ignoredLabel) {
+      ignoredLabel = document.createElement('span');
+      ignoredLabel.className = 'file-ignored';
+      ignoredLabel.textContent = ignoredByJapanese ? '日本語名のため除外' : 'gitignore対象';
+      item.appendChild(ignoredLabel);
+    } else if (ignored && ignoredLabel) {
+      ignoredLabel.textContent = ignoredByJapanese ? '日本語名のため除外' : 'gitignore対象';
+    } else if (!ignored && ignoredLabel) {
+      ignoredLabel.remove();
+    }
+  });
+}
+
+function toggleJapaneseExclusion(checked) {
+  state.excludeJapaneseFiles = checked;
+  refreshFileListIgnoreState();
+}
+
+function onFileCheck(name, checked) {
+  // チェック状態はDOMから直接取得するので特に何もしない
+}
+
+function checkAllFiles(checked) {
+  document.querySelectorAll('.file-item:not(.ignored) input[type="checkbox"]')
+    .forEach(cb => cb.checked = checked);
+}
+
+function getSelectedFiles() {
+  const selected = [];
+  document.querySelectorAll('.file-item input[type="checkbox"]:checked').forEach(cb => {
+    selected.push(cb.closest('.file-item').dataset.filename);
+  });
+  return selected;
+}
+
+async function saveGitignore() {
+  const content = document.getElementById('gitignore-content').value;
+  const result = await window.api.saveGitignore({ folderPath: state.selectedFolder, content });
+  const div = document.getElementById('gitignore-save-result');
+  if (result.success) {
+    div.innerHTML = '<span class="status-badge success">✓ 保存しました</span>';
+    parseIgnorePatterns(content);
+    refreshFileListIgnoreState();
+    setTimeout(() => div.innerHTML = '', 2000);
+  } else {
+    div.innerHTML = `<span class="status-badge error">✗ ${result.error}</span>`;
+  }
+}
+
+function addCommonIgnores() {
+  const common = `${DEFAULT_GITIGNORE}.git/\n`;
+  const ta = document.getElementById('gitignore-content');
+  const existing = ta.value;
+  const toAdd = common.split('\n').filter(line => line && !existing.includes(line));
+  ta.value = existing + (existing.endsWith('\n') ? '' : '\n') + toAdd.join('\n');
+  parseIgnorePatterns(ta.value);
+  refreshFileListIgnoreState();
+}
+
+// ===== Step 4: Deploy =====
+function updateDeploySummary() {
+  document.getElementById('sum-account').textContent = state.account || '-';
+  document.getElementById('sum-repo').textContent = state.selectedRepo || '-';
+  document.getElementById('sum-folder').textContent = state.selectedFolder || '-';
+}
+
+function setDeployMode(mode) {
+  state.deployMode = mode;
+  document.getElementById('mode-preserve').classList.toggle('active', mode === 'preserve');
+  document.getElementById('mode-force').classList.toggle('active', mode === 'force');
+}
+
+async function doDeploy() {
+  const commitMessage = document.getElementById('commit-message').value.trim() || 'Initial commit';
+  const branch = document.getElementById('branch-name').value.trim() || 'main';
+
+  if (!state.selectedFolder) { alert('フォルダを選択してください'); return; }
+  if (!state.selectedRepoUrl) { alert('リポジトリを選択してください'); return; }
+
+  // 選択ファイル取得
+  const selectedFiles = getSelectedFiles();
+
+  const btn = document.getElementById('btn-deploy');
+  const resultDiv = document.getElementById('deploy-result');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinning">⟳</span> デプロイ中...';
+  resultDiv.innerHTML = '';
+
+  const logDiv = document.getElementById('deploy-log');
+  const logWrapper = document.getElementById('deploy-log-wrapper');
+  logWrapper.style.display = 'block';
+  logDiv.innerHTML = '';
+
+  function addLog(msg, type = '') {
+    const line = document.createElement('div');
+    line.className = 'log-line' + (type ? ' log-' + type : '');
+    line.textContent = msg;
+    logDiv.appendChild(line);
+    logDiv.scrollTop = logDiv.scrollHeight;
+  }
+
+  const deployModeLabel = state.deployMode === 'preserve' ? '履歴を保持' : 'force push';
+  addLog(`🔧 デプロイを開始します（選択 ${selectedFiles.length}ファイル / ${deployModeLabel}）...`, 'info');
+  addLog('対象: ' + (selectedFiles.length > 0 ? selectedFiles.join(', ') : '選択ファイルなし'));
+
+  const gitignoreContent = document.getElementById('gitignore-content')?.value;
+  if (gitignoreContent !== undefined) {
+    addLog('📝 .gitignore を保存中...');
+    await window.api.saveGitignore({ folderPath: state.selectedFolder, content: gitignoreContent });
+    parseIgnorePatterns(gitignoreContent);
+    refreshFileListIgnoreState();
+  }
+
+  // git init（未初期化の場合）
+  const gitCheck = await window.api.gitInitCheck({ folderPath: state.selectedFolder });
+  if (!gitCheck.initialized) {
+    addLog('📌 git init を実行中...');
+    await window.api.gitInit({ folderPath: state.selectedFolder });
+  }
+
+  // remote設定
+  addLog(`🔗 リモートリポジトリを設定中: ${state.selectedRepoUrl}`);
+  await window.api.gitSetRemote({ folderPath: state.selectedFolder, repoUrl: state.selectedRepoUrl });
+
+  // progress受信
+  window.api.onDeployProgress((msg) => { addLog(msg); });
+
+  // 選択ファイルのみデプロイ
+  const result = await window.api.gitDeploySelected({
+    folderPath: state.selectedFolder,
+    selectedFiles,
+    commitMessage,
+    branch,
+    pushMode: state.deployMode
+  });
+
+  if (result.success) {
+    resultDiv.innerHTML = `
+      <div class="account-info" style="background:var(--green-dim); border-color:var(--green);">
+        <span style="font-size:28px;">🎉</span>
+        <div>
+          <div class="account-name">デプロイ完了！</div>
+          <div class="account-label">${state.selectedRepoUrl}</div>
+        </div>
+      </div>
+    `;
+  } else {
+    resultDiv.innerHTML = `<span class="status-badge error">✗ エラーが発生しました</span>`;
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = '🚀 デプロイ実行';
+}
+
+function clearDeployLog() {
+  document.getElementById('deploy-log-wrapper').style.display = 'none';
+  document.getElementById('deploy-log').innerHTML = '';
+  document.getElementById('deploy-result').innerHTML = '';
+}
+
+// ===== ユーティリティ =====
+function markStepDone(step) {
+  state.steps[step] = true;
+  const nav = document.querySelector(`[data-page="${step}"]`);
+  nav.classList.add('done');
+}
+
+// 初期化
+window.addEventListener('DOMContentLoaded', () => {
+  window.api.windowIsMaximized().then(result => updateWindowToggleButton(result.isMaximized));
+  window.api.onWindowMaximizeState((data) => updateWindowToggleButton(data.isMaximized));
+  window.api.checkEnvironment().then(renderEnvironmentCheck).catch(() => {
+    renderEnvironmentCheck({ success: false, checks: [] });
+  });
+  checkAuth();
+});
+</script>
+</body>
+</html>

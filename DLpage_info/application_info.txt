@@ -1,0 +1,38 @@
+◆ 表示アプリ名
+GitHub Deploy Tool
+
+◆ カテゴリ
+Utility
+
+◆ 概要
+ローカルフォルダの内容をGitHubリポジトリへGUIでアップロードするためのWindows向けツールです．
+GitHub認証，リポジトリ選択，フォルダ選択，コミット，pushまでを画面上で順番に実行できます．
+
+◆ 詳細
+GitコマンドやGitHub CLIの操作に慣れていない場合でも，GitHubへのアップロード作業をGUIで簡略化するために作成したツールです．
+配布版はフォルダ直下の起動用exeからresources内のElectron本体を起動する形式にしています．
+Node.jsやnpm installは不要ですが，内部でgitコマンドとGitHub CLIを使用するため，配布先PCにはGitとGitHub CLIが必要です．
+
+通常のデプロイでは「履歴を保持」モードを使用することで，リモートリポジトリの履歴を取得した上で差分のみを通常pushできます．
+従来方式としてforce pushモードも選択できますが，リモート履歴を上書きする可能性があるため共有リポジトリでは注意が必要です．
+
+◆ 主な機能
+・GitHubアカウント認証状態の確認
+・既存リポジトリの選択とリポジトリの新規作成
+・デプロイ対象ファイルの選択
+・.gitignoreの自動作成
+・コミットメッセージとブランチ名の指定
+・履歴を保持した通常pushとforce push
+
+◆ 作成言語
+Electron / JavaScript
+
+◆ 動作環境
+Windows 10 , Windows 11
+
+◆ 必要環境
+Git
+GitHub CLI
+
+◆ 備考
+配布版exeはNode.jsとnpmは不要です．

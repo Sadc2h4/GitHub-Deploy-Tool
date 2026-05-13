@@ -1,0 +1,48 @@
+{
+  "name": "github-deploy-app",
+  "version": "1.0.0",
+  "description": "GitHub Deploy GUI Tool",
+  "author": "C2H4",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "install-deps": "npm install",
+    "build:dir": "electron-builder --win dir",
+    "build:portable": "electron-builder --win portable"
+  },
+  "build": {
+    "appId": "local.c2h4.github-deploy-tool",
+    "productName": "GitHub Deploy Tool",
+    "asar": true,
+    "directories": {
+      "output": "publish"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "package.json"
+    ],
+    "extraFiles": [
+      {
+        "from": "resources",
+        "to": "definitions",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        "dir",
+        "portable"
+      ]
+    }
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.13.3"
+  }
+}
