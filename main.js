@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const { exec, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
 let mainWindow;
 let cachedGitExecutable = null;
@@ -129,10 +130,28 @@ function runCommand(command, cwd = null, extraOptions = {}) {
 }
 
 function formatCommandError(err) {
-  return [err?.stderr, err?.stdout, err?.error]
+  const detail = [err?.stderr, err?.stdout, err?.error, err?.message]
     .map(value => (value || '').trim())
     .filter(Boolean)
     .join('\n');
+
+  if (detail) return detail;
+
+  if (err instanceof Error) {
+    return err.stack || err.message || String(err);
+  }
+
+  try {
+    const keys = Object.getOwnPropertyNames(err || {});
+    const normalized = {};
+    keys.forEach(key => {
+      normalized[key] = err[key];
+    });
+    const json = JSON.stringify(normalized);
+    return json && json !== '{}' ? json : String(err);
+  } catch (_) {
+    return String(err);
+  }
 }
 
 function isWorkflowScopeError(detail) {
@@ -162,6 +181,136 @@ function parseLines(output) {
     .filter(Boolean);
 }
 
+function parseNullSeparated(output) {
+  return (output || '')
+    .split('\0')
+    .map(line => line.trim())
+    .filter(Boolean);
+}
+
+function createWildcardRegex(pattern) {
+  return new RegExp('^' + pattern
+    .split('*')
+    .map(part => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
+    .join('.*') + '$');
+}
+
+//-------------------------------------------------------------------------------
+// .gitignoreの内容をツール独自の階層横断ルールとして判定する処理
+//-------------------------------------------------------------------------------
+function isIgnoredByToolRule(filePath, gitignoreContent) {
+  const normalizedPath = filePath.replace(/\\/g, '/');
+  const segments = normalizedPath.split('/');
+  let ignored = false;
+
+  const rules = (gitignoreContent || '')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line && !line.startsWith('#'));
+
+  for (const rule of rules) {
+    const negated = rule.startsWith('!');
+    const rawPattern = negated ? rule.slice(1) : rule;
+    const directoryOnly = rawPattern.endsWith('/');
+    const pattern = rawPattern.replace(/^\//, '').replace(/\/$/, '');
+    if (!pattern) continue;
+
+    let matched = false;
+    if (directoryOnly && !pattern.includes('/')) {
+      matched = segments.includes(pattern);
+    } else if (!pattern.includes('/')) {
+      const regex = pattern.includes('*') ? createWildcardRegex(pattern) : null;
+      matched = segments.some(segment => regex ? regex.test(segment) : segment === pattern);
+    } else {
+      const regex = pattern.includes('*') ? createWildcardRegex(pattern) : null;
+      matched = regex
+        ? regex.test(normalizedPath)
+        : normalizedPath === pattern || normalizedPath.startsWith(pattern + '/');
+    }
+
+    if (matched) ignored = !negated;
+  }
+
+  return ignored;
+}
+
+//-------------------------------------------------------------------------------
+// 追跡済みファイルから.gitignore対象を抽出する処理
+//-------------------------------------------------------------------------------
+async function getTrackedIgnoredFiles(folderPath) {
+  const trackedResult = await runCommand('git ls-files -z', folderPath).catch(() => ({ stdout: '' }));
+  const trackedFiles = parseNullSeparated(trackedResult.stdout)
+    .filter(f => f !== '.git' && !f.startsWith('.git/'));
+
+  if (!trackedFiles.length) return [];
+
+  const gitIgnoredResult = await runCommand('git ls-files -ci --exclude-standard -z', folderPath).catch(() => ({ stdout: '' }));
+  const ignored = new Set(parseNullSeparated(gitIgnoredResult.stdout));
+
+  const gitignorePath = path.join(folderPath, '.gitignore');
+  let gitignoreContent = '';
+  try {
+    gitignoreContent = fs.readFileSync(gitignorePath, 'utf8');
+  } catch (_) {}
+
+  for (const file of trackedFiles) {
+    if (isIgnoredByToolRule(file, gitignoreContent)) {
+      ignored.add(file);
+    }
+  }
+
+  return Array.from(ignored).filter(file => trackedFiles.includes(file));
+}
+
+//-------------------------------------------------------------------------------
+// 多数のファイルをGitのpathspecファイル経由で一括処理する処理
+//-------------------------------------------------------------------------------
+function runGitPathspecCommand(folderPath, gitArgs, filePaths, extraOptions = {}) {
+  if (!filePaths.length) {
+    return Promise.resolve({ stdout: '', stderr: '' });
+  }
+
+  const tempPath = path.join(
+    os.tmpdir(),
+    `github-deploy-pathspec-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.txt`
+  );
+  fs.writeFileSync(tempPath, Buffer.from(filePaths.join('\0') + '\0', 'utf8'));
+
+  return new Promise((resolve, reject) => {
+    const { env, ...spawnOptions } = extraOptions;
+    const git = spawn(findGitExecutable(), [
+      ...gitArgs,
+      `--pathspec-from-file=${tempPath}`,
+      '--pathspec-file-nul'
+    ], {
+      cwd: folderPath,
+      ...spawnOptions,
+      env: getCommandEnv(env)
+    });
+
+    let stdout = '';
+    let stderr = '';
+    git.stdout.on('data', chunk => {
+      stdout += chunk.toString();
+    });
+    git.stderr.on('data', chunk => {
+      stderr += chunk.toString();
+    });
+    git.on('error', error => {
+      try { fs.unlinkSync(tempPath); } catch (_) {}
+      reject({ error: error.message, stderr, stdout });
+    });
+    git.on('close', code => {
+      try { fs.unlinkSync(tempPath); } catch (_) {}
+      if (code === 0) {
+        resolve({ stdout, stderr });
+      } else {
+        reject({ error: `git ${gitArgs.join(' ')} exited with code ${code}`, stderr, stdout });
+      }
+    });
+  });
+}
+
 function normalizeRepoListResponse(stdout) {
   const parsed = JSON.parse(stdout || '[]');
   const pages = Array.isArray(parsed) ? parsed : [parsed];
@@ -186,13 +335,110 @@ function normalizeRepoListResponse(stdout) {
     });
 }
 
-async function isGitIgnored(folderPath, filePath) {
-  try {
-    await runCommand(`git check-ignore -- "${filePath}"`, folderPath);
-    return true;
-  } catch (_) {
-    return false;
+//-------------------------------------------------------------------------------
+// 指定された複数ファイルがgitignore対象かをGit本体の判定で一括確認する処理
+//-------------------------------------------------------------------------------
+async function getGitIgnoredFiles(folderPath, filePaths) {
+  if (!filePaths.length) return new Set();
+
+  const git = spawn(findGitExecutable(), ['check-ignore', '--stdin'], {
+    cwd: folderPath,
+    env: getCommandEnv()
+  });
+
+  return await new Promise(resolve => {
+    let stdout = '';
+    git.stdout.on('data', chunk => {
+      stdout += chunk.toString();
+    });
+    git.on('error', () => resolve(new Set()));
+    git.on('close', code => {
+      if (code !== 0 && code !== 1) {
+        resolve(new Set());
+        return;
+      }
+      resolve(new Set(parseLines(stdout)));
+    });
+    git.stdin.end(filePaths.join('\n') + '\n');
+  });
+}
+
+//-------------------------------------------------------------------------------
+// デプロイ対象フォルダ内のファイルをサブフォルダまで再帰的に列挙する処理
+//-------------------------------------------------------------------------------
+function collectDeployFiles(folderPath, baseDir = folderPath, options = {}) {
+  const entries = fs.readdirSync(folderPath, { withFileTypes: true });
+  const files = [];
+
+  for (const entry of entries) {
+    if (entry.name === '.git') continue;
+
+    const absolutePath = path.join(folderPath, entry.name);
+    const relativePath = path.relative(baseDir, absolutePath).replace(/\\/g, '/');
+
+    if (entry.isDirectory()) {
+      if (options.includeDirectories) {
+        files.push({
+          name: relativePath,
+          isDir: true,
+          isHidden: entry.name.startsWith('.'),
+          hasJapaneseName: hasJapaneseInName(relativePath)
+        });
+      }
+      files.push(...collectDeployFiles(absolutePath, baseDir, options));
+      continue;
+    }
+
+    files.push({
+      name: relativePath,
+      isDir: false,
+      isHidden: entry.name.startsWith('.'),
+      hasJapaneseName: hasJapaneseInName(relativePath)
+    });
   }
+
+  return files;
+}
+
+//-------------------------------------------------------------------------------
+// 画面表示用に選択フォルダ直下のファイルとフォルダだけを列挙する処理
+//-------------------------------------------------------------------------------
+function collectTopLevelDeployEntries(folderPath) {
+  const entries = fs.readdirSync(folderPath, { withFileTypes: true });
+  return entries
+    .filter(entry => entry.name !== '.git')
+    .map(entry => ({
+      name: entry.name,
+      isDir: entry.isDirectory(),
+      isHidden: entry.name.startsWith('.'),
+      hasJapaneseName: hasJapaneseInName(entry.name)
+    }));
+}
+
+//-------------------------------------------------------------------------------
+// 画面で選択されたファイルやフォルダを実際にgit addするファイル一覧へ展開する処理
+//-------------------------------------------------------------------------------
+function expandSelectedFilesForDeploy(folderPath, selectedFiles) {
+  const expandedFiles = [];
+
+  for (const file of selectedFiles) {
+    if (file === '.git' || file.startsWith('.git/')) continue;
+
+    const absolutePath = path.join(folderPath, file);
+    if (!fs.existsSync(absolutePath)) {
+      expandedFiles.push(file.replace(/\\/g, '/'));
+      continue;
+    }
+
+    const stat = fs.statSync(absolutePath);
+    if (stat.isDirectory()) {
+      expandedFiles.push(...collectDeployFiles(absolutePath, folderPath).map(item => item.name));
+    } else {
+      expandedFiles.push(file.replace(/\\/g, '/'));
+    }
+  }
+
+  return Array.from(new Set(expandedFiles));
 }
 
 async function checkCommandVersion(command) {
@@ -249,7 +495,7 @@ async function fetchRemoteBranch(event, folderPath, branch) {
 
   event.sender.send('deploy-progress', '📥 履歴保持モード: リモート履歴を取得中...');
   await runCommand(
-    `git fetch origin ${branch}`,
+    `git fetch origin refs/heads/${branch}:refs/remotes/origin/${branch}`,
     folderPath,
     {
       timeout: 120000,
@@ -302,9 +548,17 @@ async function prepareBranchForDeploy(event, folderPath, branch, pushMode) {
   }
 
   event.sender.send('deploy-progress', '🧭 リモート履歴を差分比較のベースに設定中...');
-  await runCommand(`git symbolic-ref HEAD refs/heads/${branch}`, folderPath);
-  await runCommand(`git reset --mixed origin/${branch}`, folderPath);
-  await runCommand(`git branch --set-upstream-to=origin/${branch} ${branch}`, folderPath).catch(() => {});
+  try {
+    await runCommand(`git rev-parse --verify refs/remotes/origin/${branch}`, folderPath);
+    await runCommand(`git update-ref refs/heads/${branch} refs/remotes/origin/${branch}`, folderPath);
+    await runCommand(`git symbolic-ref HEAD refs/heads/${branch}`, folderPath);
+    await runCommand(`git reset --mixed refs/remotes/origin/${branch}`, folderPath);
+    await runCommand(`git branch --set-upstream-to=origin/${branch} ${branch}`, folderPath).catch(() => {});
+  } catch (baseErr) {
+    const detail = formatCommandError(baseErr) || 'リモート履歴のベース設定に失敗しました';
+    event.sender.send('deploy-progress', `❌ ベース設定失敗: ${detail}`);
+    throw baseErr;
+  }
   event.sender.send('deploy-progress', `🌿 ブランチ: ${branch}（origin/${branch} をベースに差分化）`);
 }
 
@@ -654,6 +908,74 @@ ipcMain.handle('git-deploy', async (event, { folderPath, commitMessage, branch }
   }
 });
 
+//-------------------------------------------------------------------------------
+// 選択中リポジトリで追跡済みのgitignore対象ファイルだけを削除コミットする処理
+//-------------------------------------------------------------------------------
+ipcMain.handle('git-remove-ignored-tracked', async (event, { folderPath, repoUrl, commitMessage, branch }) => {
+  try {
+    event.sender.send('deploy-progress', '🔐 GitHub認証をGitに連携中...');
+    await runCommand('gh auth setup-git', folderPath).catch((err) => {
+      event.sender.send('deploy-progress', `⚠ gh auth setup-git に失敗: ${formatCommandError(err)}`);
+    });
+
+    event.sender.send('deploy-progress', '🔗 リモートリポジトリを設定中...');
+    try {
+      await runCommand('git remote remove origin', folderPath);
+    } catch (_) {}
+    await runCommand(`git remote add origin ${repoUrl}`, folderPath);
+
+    event.sender.send('deploy-progress', '👤 Gitユーザー設定中...');
+    try {
+      const accountResult = await runCommand('gh api user --jq .login');
+      const accountName = accountResult.stdout.trim() || 'deploy-user';
+      await runCommand(`git config user.name "${accountName}"`, folderPath);
+      await runCommand(`git config user.email "${accountName}@users.noreply.github.com"`, folderPath);
+    } catch (_) {
+      await runCommand('git config user.name "deploy-user"', folderPath);
+      await runCommand('git config user.email "deploy-user@users.noreply.github.com"', folderPath);
+    }
+
+    await prepareBranchForDeploy(event, folderPath, branch, 'preserve');
+
+    event.sender.send('deploy-progress', '🔍 追跡済みの.gitignore対象ファイルを検索中...');
+    const trackedIgnoredFiles = await getTrackedIgnoredFiles(folderPath);
+
+    if (trackedIgnoredFiles.length === 0) {
+      event.sender.send('deploy-progress', 'ℹ リポジトリ内に追跡済みの.gitignore対象ファイルはありません。');
+      return { success: true, removed: 0 };
+    }
+
+    event.sender.send('deploy-progress', `🚫 ${trackedIgnoredFiles.length}件をリポジトリから削除します（ローカルファイルは残します）`);
+    trackedIgnoredFiles.slice(0, 10).forEach(file => {
+      event.sender.send('deploy-progress', `  - ${file}`);
+    });
+    if (trackedIgnoredFiles.length > 10) {
+      event.sender.send('deploy-progress', `  ...ほか${trackedIgnoredFiles.length - 10}件`);
+    }
+
+    await runGitPathspecCommand(folderPath, ['rm', '-r', '--cached', '--ignore-unmatch'], trackedIgnoredFiles);
+
+    const diffResult = await runCommand('git diff --cached --name-status', folderPath);
+    const stagedFiles = parseLines(diffResult.stdout);
+    if (stagedFiles.length === 0) {
+      event.sender.send('deploy-progress', 'ℹ 削除対象の変更はありません。');
+      return { success: true, removed: 0 };
+    }
+
+    event.sender.send('deploy-progress', `💬 ${stagedFiles.length}件の削除をコミット中...`);
+    await runCommand(`git commit -m "${commitMessage}"`, folderPath);
+
+    event.sender.send('deploy-progress', `🚀 ${branch}ブランチへプッシュ中...`);
+    await pushWithForceFallback(event, folderPath, branch, 'preserve');
+    event.sender.send('deploy-progress', '✅ gitignore対象ファイルの削除が完了しました');
+    return { success: true, removed: trackedIgnoredFiles.length };
+  } catch (e) {
+    const errMsg = formatCommandError(e) || JSON.stringify(e);
+    event.sender.send('deploy-progress', `❌ エラー詳細: ${errMsg}`);
+    return { success: false, error: errMsg };
+  }
+});
+
 // git config設定
 ipcMain.handle('git-config', async (_, { name, email }) => {
   try {
@@ -665,16 +987,14 @@ ipcMain.handle('git-config', async (_, { name, email }) => {
   }
 });
 
-// フォルダ内ファイル一覧取得（1階層）
+// フォルダ内ファイル一覧取得（画面選択用に直下1階層のみ表示）
 ipcMain.handle('get-file-list', async (_, { folderPath }) => {
   try {
-    const entries = fs.readdirSync(folderPath, { withFileTypes: true });
-    const files = entries.map(e => ({
-      name: e.name,
-      isDir: e.isDirectory(),
-      isHidden: e.name.startsWith('.'),
-      hasJapaneseName: hasJapaneseInName(e.name)
-    }));
+    const files = collectTopLevelDeployEntries(folderPath);
+    const ignoredFiles = await getGitIgnoredFiles(folderPath, files.map(file => file.name));
+    files.forEach(file => {
+      file.ignoredByGit = ignoredFiles.has(file.name);
+    });
     return { success: true, files };
   } catch (e) {
     return { success: false, error: e.message };
@@ -704,7 +1024,14 @@ ipcMain.handle('save-gitignore', async (_, { folderPath, content }) => {
 });
 
 // 選択ファイルのみをステージング（git add）
-ipcMain.handle('git-deploy-selected', async (event, { folderPath, selectedFiles, commitMessage, branch, pushMode = 'force' }) => {
+ipcMain.handle('git-deploy-selected', async (event, {
+  folderPath,
+  selectedFiles,
+  commitMessage,
+  branch,
+  pushMode = 'force',
+  deletionMode = 'keep'
+}) => {
   try {
     event.sender.send('deploy-progress', '🔐 GitHub認証をGitに連携中...');
     const setupGitResult = await runCommand('gh auth setup-git', folderPath).catch((err) => ({
@@ -745,11 +1072,13 @@ ipcMain.handle('git-deploy-selected', async (event, { folderPath, selectedFiles,
     } catch (_) {} // 変更がある場合も non-zero で終わるので無視
 
     // .gitignore はフロント側の表示だけでなく、実際の git 判定でも除外する
+    const expandedSelectedFiles = expandSelectedFilesForDeploy(folderPath, selectedFiles);
+    const ignoredSelectedFiles = await getGitIgnoredFiles(folderPath, expandedSelectedFiles);
     const deployFiles = [];
     const ignoredDeployFiles = [];
-    for (const file of selectedFiles) {
+    for (const file of expandedSelectedFiles) {
       if (file === '.git' || file.startsWith('.git/')) continue;
-      if (await isGitIgnored(folderPath, file)) {
+      if (ignoredSelectedFiles.has(file)) {
         ignoredDeployFiles.push(file);
       } else {
         deployFiles.push(file);
@@ -768,54 +1097,68 @@ ipcMain.handle('git-deploy-selected', async (event, { folderPath, selectedFiles,
 
     event.sender.send('deploy-progress', `📦 ${deployFiles.length}件のファイルをステージング中...`);
 
-    for (const file of deployFiles) {
+    if (deployFiles.length > 0) {
       try {
-        const addResult = await runCommand(`git add -v -- "${file}"`, folderPath);
-        const verboseOutput = addResult.stdout.trim();
-        if (verboseOutput) {
-          event.sender.send('deploy-progress', `  ✓ ${file}`);
-        } else {
-          event.sender.send('deploy-progress', `  ○ ${file} (変更なし・スキップ)`);
+        await runGitPathspecCommand(folderPath, ['add'], deployFiles);
+        event.sender.send('deploy-progress', `  ✓ ${deployFiles.length}件を一括ステージング`);
+        deployFiles.slice(0, 10).forEach(file => {
+          event.sender.send('deploy-progress', `  - ${file}`);
+        });
+        if (deployFiles.length > 10) {
+          event.sender.send('deploy-progress', `  ...ほか${deployFiles.length - 10}件`);
         }
       } catch (addErr) {
-        event.sender.send('deploy-progress', `  ⚠ スキップ: ${file} (${addErr.stderr || addErr.stdout || addErr.error})`);
+        event.sender.send('deploy-progress', `  ⚠ 一括ステージングに失敗: ${formatCommandError(addErr)}`);
       }
     }
 
     // すでに追跡済みの ignore 対象は、ローカルファイルを残したままリポジトリから外す
-    const trackedIgnoredResult = await runCommand('git ls-files -ci --exclude-standard', folderPath).catch(() => ({ stdout: '' }));
-    const trackedIgnoredFiles = parseLines(trackedIgnoredResult.stdout)
-      .filter(f => f !== '.git' && !f.startsWith('.git/'));
+    const trackedIgnoredFiles = await getTrackedIgnoredFiles(folderPath);
 
     if (trackedIgnoredFiles.length > 0) {
       event.sender.send('deploy-progress', `🚫 追跡済みの.gitignore対象をリポジトリから除外: ${trackedIgnoredFiles.length}件`);
-    }
-
-    for (const file of trackedIgnoredFiles) {
       try {
-        await runCommand(`git rm -r --cached -- "${file}"`, folderPath);
-        event.sender.send('deploy-progress', `  - ${file} (追跡解除)`);
+        await runGitPathspecCommand(folderPath, ['rm', '-r', '--cached', '--ignore-unmatch'], trackedIgnoredFiles);
+        trackedIgnoredFiles.slice(0, 10).forEach(file => {
+          event.sender.send('deploy-progress', `  - ${file} (追跡解除)`);
+        });
+        if (trackedIgnoredFiles.length > 10) {
+          event.sender.send('deploy-progress', `  ...ほか${trackedIgnoredFiles.length - 10}件`);
+        }
       } catch (removeErr) {
-        event.sender.send('deploy-progress', `  ⚠ 追跡解除に失敗: ${file} (${removeErr.stderr || removeErr.stdout || removeErr.error})`);
+        event.sender.send('deploy-progress', `  ⚠ 追跡解除に失敗: ${formatCommandError(removeErr)}`);
       }
     }
 
-    // 追跡済みファイルがローカルから削除されている場合は、削除も変更としてステージする
+    // 追跡済みファイルがローカルから削除されている場合の扱いをモードで切り替える
     const deletedResult = await runCommand('git ls-files --deleted', folderPath).catch(() => ({ stdout: '' }));
     const deletedTrackedFiles = parseLines(deletedResult.stdout)
       .filter(f => f !== '.git' && !f.startsWith('.git/'))
       .filter(f => !hasJapaneseInName(f));
 
-    if (deletedTrackedFiles.length > 0) {
+    if (deletionMode === 'keep' && deletedTrackedFiles.length > 0) {
+      event.sender.send('deploy-progress', `🛡 リモートのみの既存ファイルを保持: ${deletedTrackedFiles.length}件`);
+      deletedTrackedFiles.slice(0, 10).forEach(file => {
+        event.sender.send('deploy-progress', `  - ${file} (削除しない)`);
+      });
+      if (deletedTrackedFiles.length > 10) {
+        event.sender.send('deploy-progress', `  ...ほか${deletedTrackedFiles.length - 10}件`);
+      }
+    } else if (deletedTrackedFiles.length > 0) {
       event.sender.send('deploy-progress', `🗑 ${deletedTrackedFiles.length}件の削除をステージング中...`);
     }
 
-    for (const file of deletedTrackedFiles) {
+    if (deletionMode === 'delete') {
       try {
-        await runCommand(`git add -A -- "${file}"`, folderPath);
-        event.sender.send('deploy-progress', `  ✗ ${file} (削除を反映)`);
+        await runGitPathspecCommand(folderPath, ['add', '-A'], deletedTrackedFiles);
+        deletedTrackedFiles.slice(0, 10).forEach(file => {
+          event.sender.send('deploy-progress', `  ✗ ${file} (削除を反映)`);
+        });
+        if (deletedTrackedFiles.length > 10) {
+          event.sender.send('deploy-progress', `  ...ほか${deletedTrackedFiles.length - 10}件`);
+        }
       } catch (deleteErr) {
-        event.sender.send('deploy-progress', `  ⚠ 削除反映に失敗: ${file} (${deleteErr.stderr || deleteErr.stdout || deleteErr.error})`);
+        event.sender.send('deploy-progress', `  ⚠ 削除反映に失敗: ${formatCommandError(deleteErr)}`);
       }
     }
 

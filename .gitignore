@@ -19,6 +19,14 @@ packages/
 *.nupkg
 *.snupkg
 
+# Node / Electron
+node_modules/
+publish/
+*.asar
+*.blockmap
+*.zip
+*.exe
+
 # テスト/解析
 TestResults/
 *.trx

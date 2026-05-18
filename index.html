@@ -283,7 +283,7 @@
     .path-display .path-text.set { color: var(--text); }
 
     /* リポジトリリスト */
-    .repo-list { display: flex; flex-direction: column; gap: 8px; max-height: min(520px, 62vh); overflow-y: auto; }
+    .repo-list { display: flex; flex-direction: column; gap: 8px; max-height: min(420px, 48vh); overflow-y: auto; }
     .repo-item {
       display: flex;
       align-items: center;
@@ -582,6 +582,9 @@
           <label style="margin:0">リポジトリ一覧</label>
           <button class="btn btn-secondary" onclick="loadRepos()" style="padding:4px 10px; font-size:12px;">🔄 更新</button>
         </div>
+        <div class="form-group" style="margin-bottom:12px;">
+          <input type="text" id="repo-search" placeholder="リポジトリ名・所有者で検索..." oninput="filterRepos()">
+        </div>
         <div class="repo-list" id="repo-list">
           <div style="text-align:center; padding:20px; color:var(--text2); font-size:13px;">読み込み中...</div>
         </div>
@@ -721,9 +724,26 @@
         </div>
       </div>
 
+      <div class="form-group">
+        <label>リモートに存在する不足ファイルの扱い</label>
+        <div class="toggle-group">
+          <div class="toggle-btn active" id="delete-keep" onclick="setDeletionMode('keep')">
+            <div class="deploy-mode-title">残して続行</div>
+            <div class="deploy-mode-desc">選択フォルダに無い既存ファイルを削除しない</div>
+          </div>
+          <div class="toggle-btn" id="delete-remove" onclick="setDeletionMode('delete')">
+            <div class="deploy-mode-title">削除を反映</div>
+            <div class="deploy-mode-desc">存在しない追跡済みファイルをリポジトリから削除</div>
+          </div>
+        </div>
+      </div>
+
       <div style="margin-bottom:16px;">
         <button class="btn btn-success btn-lg" id="btn-deploy" onclick="doDeploy()">
           🚀 デプロイ実行
+        </button>
+        <button class="btn btn-secondary btn-lg" id="btn-clean-ignored" onclick="removeIgnoredTrackedFiles()" style="margin-left:8px;">
+          🧹 gitignore対象を削除
         </button>
       </div>
 
@@ -754,6 +774,8 @@ const state = {
   selectedFolder: null,
   repoVisibility: 'public',
   deployMode: 'preserve',
+  deletionMode: 'keep',
+  repos: [],
   excludeJapaneseFiles: false,
   steps: { auth: false, repo: false, folder: false }
 };
@@ -937,16 +959,31 @@ async function loadRepos() {
     return;
   }
 
-  if (!result.repos.length) {
+  state.repos = result.repos;
+  if (!state.repos.length) {
     list.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text2);font-size:13px;">push 権限のあるリポジトリが見つかりません</div>';
     return;
   }
 
+  renderRepos(state.repos);
+}
+
+//-------------------------------------------------------------------------------
+// 取得済みリポジトリ一覧を画面に描画する処理
+//-------------------------------------------------------------------------------
+function renderRepos(repos) {
+  const list = document.getElementById('repo-list');
   list.innerHTML = '';
-  result.repos.forEach(repo => {
+  if (!repos.length) {
+    list.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text2);font-size:13px;">検索条件に一致するリポジトリがありません</div>';
+    return;
+  }
+
+  repos.forEach(repo => {
     const item = document.createElement('div');
     item.className = 'repo-item';
     const displayName = repo.nameWithOwner || repo.name;
+    if (state.selectedRepo === displayName) item.classList.add('selected');
     item.innerHTML = `
       <div>
         <div class="repo-name">${escapeHtml(displayName)}</div>
@@ -957,6 +994,22 @@ async function loadRepos() {
     item.onclick = () => selectRepo(repo, item);
     list.appendChild(item);
   });
+}
+
+//-------------------------------------------------------------------------------
+// リポジトリ一覧を検索文字列で絞り込む処理
+//-------------------------------------------------------------------------------
+function filterRepos() {
+  const query = document.getElementById('repo-search').value.trim().toLowerCase();
+  if (!query) {
+    renderRepos(state.repos || []);
+    return;
+  }
+
+  renderRepos((state.repos || []).filter(repo => {
+    const name = `${repo.nameWithOwner || repo.name} ${repo.url || ''}`.toLowerCase();
+    return name.includes(query);
+  }));
 }
 
 function selectRepo(repo, el) {
@@ -1126,7 +1179,7 @@ function renderFileList(files) {
   const filtered = files.filter(f => f.name !== '.git');
 
   filtered.forEach(file => {
-    const ignoredByGitignore = isIgnored(file.name);
+    const ignoredByGitignore = Boolean(file.ignoredByGit) || isIgnored(file.name);
     const ignoredByJapanese = state.excludeJapaneseFiles && (file.hasJapaneseName || hasJapaneseName(file.name));
     const ignored = ignoredByGitignore || ignoredByJapanese;
     const item = document.createElement('div');
@@ -1137,9 +1190,9 @@ function renderFileList(files) {
 
     item.innerHTML = `
       <input type="checkbox" ${ignored ? '' : 'checked'} ${ignored ? 'disabled' : ''}
-        onchange="onFileCheck('${file.name}', this.checked)">
+        onchange="onFileCheck(this.closest('.file-item').dataset.filename, this.checked)">
       <span class="file-icon">${icon}</span>
-      <span class="file-name">${file.name}</span>
+      <span class="file-name">${escapeHtml(file.name)}</span>
       ${ignoredByJapanese
         ? '<span class="file-ignored">日本語名のため除外</span>'
         : ignoredByGitignore ? '<span class="file-ignored">gitignore対象</span>' : ''}
@@ -1152,7 +1205,8 @@ function refreshFileListIgnoreState() {
   const items = document.querySelectorAll('.file-item');
   items.forEach(item => {
     const name = item.dataset.filename;
-    const ignoredByGitignore = isIgnored(name);
+    const fileInfo = (state.fileList || []).find(file => file.name === name);
+    const ignoredByGitignore = Boolean(fileInfo?.ignoredByGit) || isIgnored(name);
     const ignoredByJapanese = state.excludeJapaneseFiles && hasJapaneseName(name);
     const ignored = ignoredByGitignore || ignoredByJapanese;
     const cb = item.querySelector('input[type="checkbox"]');
@@ -1233,6 +1287,33 @@ function setDeployMode(mode) {
   document.getElementById('mode-force').classList.toggle('active', mode === 'force');
 }
 
+//-------------------------------------------------------------------------------
+// ローカルに存在しない追跡済みファイルの削除反映モードを切り替える処理
+//-------------------------------------------------------------------------------
+function setDeletionMode(mode) {
+  state.deletionMode = mode;
+  document.getElementById('delete-keep').classList.toggle('active', mode === 'keep');
+  document.getElementById('delete-remove').classList.toggle('active', mode === 'delete');
+}
+
+//-------------------------------------------------------------------------------
+// デプロイログを初期化して追記関数を返す処理
+//-------------------------------------------------------------------------------
+function prepareDeployLog() {
+  const logDiv = document.getElementById('deploy-log');
+  const logWrapper = document.getElementById('deploy-log-wrapper');
+  logWrapper.style.display = 'block';
+  logDiv.innerHTML = '';
+
+  return function addLog(msg, type = '') {
+    const line = document.createElement('div');
+    line.className = 'log-line' + (type ? ' log-' + type : '');
+    line.textContent = msg;
+    logDiv.appendChild(line);
+    logDiv.scrollTop = logDiv.scrollHeight;
+  };
+}
+
 async function doDeploy() {
   const commitMessage = document.getElementById('commit-message').value.trim() || 'Initial commit';
   const branch = document.getElementById('branch-name').value.trim() || 'main';
@@ -1249,21 +1330,11 @@ async function doDeploy() {
   btn.innerHTML = '<span class="spinning">⟳</span> デプロイ中...';
   resultDiv.innerHTML = '';
 
-  const logDiv = document.getElementById('deploy-log');
-  const logWrapper = document.getElementById('deploy-log-wrapper');
-  logWrapper.style.display = 'block';
-  logDiv.innerHTML = '';
-
-  function addLog(msg, type = '') {
-    const line = document.createElement('div');
-    line.className = 'log-line' + (type ? ' log-' + type : '');
-    line.textContent = msg;
-    logDiv.appendChild(line);
-    logDiv.scrollTop = logDiv.scrollHeight;
-  }
+  const addLog = prepareDeployLog();
 
   const deployModeLabel = state.deployMode === 'preserve' ? '履歴を保持' : 'force push';
-  addLog(`🔧 デプロイを開始します（選択 ${selectedFiles.length}ファイル / ${deployModeLabel}）...`, 'info');
+  const deletionModeLabel = state.deletionMode === 'keep' ? '不足ファイルは残す' : '不足ファイルは削除';
+  addLog(`🔧 デプロイを開始します（選択 ${selectedFiles.length}ファイル / ${deployModeLabel} / ${deletionModeLabel}）...`, 'info');
   addLog('対象: ' + (selectedFiles.length > 0 ? selectedFiles.join(', ') : '選択ファイルなし'));
 
   const gitignoreContent = document.getElementById('gitignore-content')?.value;
@@ -1294,7 +1365,8 @@ async function doDeploy() {
     selectedFiles,
     commitMessage,
     branch,
-    pushMode: state.deployMode
+    pushMode: state.deployMode,
+    deletionMode: state.deletionMode
   });
 
   if (result.success) {
@@ -1313,6 +1385,66 @@ async function doDeploy() {
 
   btn.disabled = false;
   btn.innerHTML = '🚀 デプロイ実行';
+}
+
+//-------------------------------------------------------------------------------
+// 選択中リポジトリ内の追跡済みgitignore対象ファイルだけを削除する処理
+//-------------------------------------------------------------------------------
+async function removeIgnoredTrackedFiles() {
+  const commitMessage = document.getElementById('commit-message').value.trim() || 'Remove ignored files';
+  const branch = document.getElementById('branch-name').value.trim() || 'main';
+
+  if (!state.selectedFolder) { alert('フォルダを選択してください'); return; }
+  if (!state.selectedRepoUrl) { alert('リポジトリを選択してください'); return; }
+
+  const btn = document.getElementById('btn-clean-ignored');
+  const resultDiv = document.getElementById('deploy-result');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinning">⟳</span> 削除中...';
+  resultDiv.innerHTML = '';
+
+  const addLog = prepareDeployLog();
+  addLog('🧹 gitignore対象ファイルの削除を開始します...', 'info');
+
+  const gitignoreContent = document.getElementById('gitignore-content')?.value;
+  if (gitignoreContent !== undefined) {
+    addLog('📝 .gitignore を保存中...');
+    await window.api.saveGitignore({ folderPath: state.selectedFolder, content: gitignoreContent });
+    parseIgnorePatterns(gitignoreContent);
+    refreshFileListIgnoreState();
+  }
+
+  const gitCheck = await window.api.gitInitCheck({ folderPath: state.selectedFolder });
+  if (!gitCheck.initialized) {
+    addLog('📌 git init を実行中...');
+    await window.api.gitInit({ folderPath: state.selectedFolder });
+  }
+
+  window.api.onDeployProgress((msg) => { addLog(msg); });
+
+  const result = await window.api.gitRemoveIgnoredTracked({
+    folderPath: state.selectedFolder,
+    repoUrl: state.selectedRepoUrl,
+    commitMessage,
+    branch
+  });
+
+  if (result.success) {
+    resultDiv.innerHTML = `
+      <div class="account-info" style="background:var(--green-dim); border-color:var(--green);">
+        <span style="font-size:28px;">✓</span>
+        <div>
+          <div class="account-name">gitignore対象の削除処理が完了しました</div>
+          <div class="account-label">${result.removed || 0}件を確認</div>
+        </div>
+      </div>
+    `;
+  } else {
+    resultDiv.innerHTML = `<span class="status-badge error">✗ エラーが発生しました</span>`;
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = '🧹 gitignore対象を削除';
 }
 
 function clearDeployLog() {

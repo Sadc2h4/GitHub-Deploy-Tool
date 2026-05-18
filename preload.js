@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('api', {
   gitSetRemote: (data) => ipcRenderer.invoke('git-set-remote', data),
   gitDeploy: (data) => ipcRenderer.invoke('git-deploy', data),
   gitDeploySelected: (data) => ipcRenderer.invoke('git-deploy-selected', data),
+  gitRemoveIgnoredTracked: (data) => ipcRenderer.invoke('git-remove-ignored-tracked', data),
   gitConfig: (data) => ipcRenderer.invoke('git-config', data),
   onDeployProgress: (cb) => {
     ipcRenderer.removeAllListeners('deploy-progress');
