@@ -7,7 +7,7 @@
 
 ## ダウンロード
 
-<a href="https://github.com/Sadc2h4/GitHub-Deploy-Tool/releases/tag/v1.1">
+<a href="https://github.com/Sadc2h4/GitHub-Deploy-Tool/releases/tag/v1.2">
   <img
     src="https://raw.githubusercontent.com/Sadc2h4/brand-assets/main/button/Download_Button_1.png"
     alt="Download .zip"
