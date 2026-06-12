@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>GitHub Deploy Tool 紹介画像 1100x710</title>
+<style>
+  /* ============================================================
+     紹介画像 1100 x 710
+     レイヤー構成: #layer-bg(背景) / #layer-art(画像) / #layer-text(文字)
+     showLayers(['bg','art','text']) で表示レイヤーを切り替えて書き出す
+     ============================================================ */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { background: transparent; }
+  body { font-family: "Yu Gothic UI", "Meiryo", "Segoe UI", sans-serif; }
+  #stage { position: relative; width: 1100px; height: 710px; overflow: hidden; }
+  .layer { position: absolute; inset: 0; }
+
+  /* ---------- 背景レイヤー ---------- */
+  #bg-body { position: absolute; inset: 0; background: linear-gradient(160deg, #f2f5fa 0%, #e7ecf4 60%, #dde4f0 100%); }
+  #bg-header { position: absolute; left: 0; top: 0; width: 1100px; height: 128px;
+    background: linear-gradient(120deg, #141a2b 0%, #1d2740 55%, #27345a 100%); }
+  #bg-footer { position: absolute; left: 0; top: 640px; width: 1100px; height: 70px;
+    background: linear-gradient(120deg, #161d2e 0%, #1d2740 100%); }
+  #bg-glow { position: absolute; left: 430px; top: 120px; width: 640px; height: 520px;
+    background: radial-gradient(closest-side, rgba(77,163,255,0.16), rgba(77,163,255,0)); }
+  .sp { position: absolute; background: #c2cbdc;
+    clip-path: polygon(50% 0, 61% 39%, 100% 50%, 61% 61%, 50% 100%, 39% 61%, 0 50%, 39% 39%); }
+
+  /* ---------- 画像レイヤー ---------- */
+  /* アプリ画面のモックアップ */
+  #mock { position: absolute; left: 52px; top: 164px; width: 482px; height: 452px;
+    background: #0d1117; border: 1px solid #30363d; border-radius: 10px;
+    box-shadow: 0 20px 44px rgba(18, 30, 60, 0.35); overflow: hidden; }
+  #mock .titlebar { height: 34px; background: #161b22; border-bottom: 1px solid #21262d;
+    display: flex; align-items: center; padding: 0 12px; }
+  #mock .dot { width: 11px; height: 11px; border-radius: 50%; margin-right: 7px; }
+  #mock .titlebar .t { color: #8b949e; font-size: 12px; margin-left: 8px; letter-spacing: 0.5px; }
+  #mock .steps { display: flex; gap: 7px; padding: 13px 14px 4px 14px; }
+  #mock .chip { font-size: 11.5px; color: #8b949e; background: #21262d; border: 1px solid #30363d;
+    border-radius: 13px; padding: 4px 11px; }
+  #mock .chip.done { color: #58d68d; border-color: #2ea04326; background: #12261a; }
+  #mock .chip.active { color: #fff; background: #1f6feb; border-color: #1f6feb; }
+  #mock .label { color: #c9d1d9; font-size: 12.5px; font-weight: 700; padding: 11px 16px 6px 16px; }
+  #mock .files { margin: 0 14px; background: #161b22; border: 1px solid #21262d; border-radius: 8px; padding: 5px 0; }
+  #mock .row { display: flex; align-items: center; padding: 5px 12px; font-size: 13px; color: #c9d1d9; }
+  #mock .row .cb { width: 13px; height: 13px; border-radius: 3px; margin-right: 9px;
+    background: #1f6feb; color: #fff; font-size: 10px; line-height: 13px; text-align: center; flex-shrink: 0; }
+  #mock .row.off .cb { background: #21262d; border: 1px solid #30363d; }
+  #mock .row.off { opacity: 0.45; }
+  #mock .row .ig { margin-left: auto; font-size: 10.5px; color: #8b949e; }
+  #mock .deploy { display: flex; align-items: center; gap: 12px; padding: 12px 16px 0 16px; }
+  #mock .btn { background: linear-gradient(180deg, #2f81f7, #1f6feb); color: #fff; font-size: 13.5px;
+    font-weight: 700; border-radius: 7px; padding: 8px 18px; }
+  #mock .log { margin: 12px 14px 0 14px; background: #161b22; border: 1px solid #21262d; border-radius: 8px;
+    padding: 9px 13px; font-size: 12px; line-height: 1.75; color: #8b949e; }
+  #mock .log .ok { color: #58d68d; font-weight: 700; }
+
+  /* ヘッダーのロゴ（アトム） */
+  #logo { position: absolute; left: 46px; top: 26px; }
+  /* バージョンバッジの土台 */
+  #badge-art { position: absolute; left: 968px; top: 44px; width: 86px; height: 38px;
+    background: linear-gradient(180deg, #2f81f7, #1f6feb); border-radius: 19px;
+    box-shadow: 0 4px 12px rgba(31, 111, 235, 0.45); }
+
+  /* 機能リストのアイコンチップ */
+  .fchip { position: absolute; width: 50px; height: 50px; border-radius: 13px;
+    background: linear-gradient(150deg, #3178d8, #4da3ff); box-shadow: 0 6px 14px rgba(49, 120, 216, 0.32);
+    color: #fff; font-size: 24px; line-height: 50px; text-align: center; }
+
+  /* フッターのフロー図 */
+  .flow-ic { position: absolute; font-size: 26px; }
+  .flow-arrow { position: absolute; color: #4da3ff; font-size: 22px; font-weight: 900; }
+  #flow-app { position: absolute; left: 252px; top: 654px; width: 42px; height: 42px; border-radius: 10px;
+    background: #0d1117; border: 1px solid #30363d; text-align: center; }
+  #flow-gh { position: absolute; left: 392px; top: 658px; }
+
+  /* ---------- 文字レイヤー ---------- */
+  #title { position: absolute; left: 138px; top: 28px; font-size: 52px; font-weight: 900;
+    color: #e8ecf4; letter-spacing: 1px; }
+  #title .b { color: #4da3ff; }
+  #tagline { position: absolute; left: 142px; top: 95px; font-size: 15px; color: #9fadcc; letter-spacing: 2px; }
+  #badge-text { position: absolute; left: 968px; top: 44px; width: 86px; height: 38px;
+    color: #fff; font-size: 17px; font-weight: 800; text-align: center; line-height: 38px; letter-spacing: 1px; }
+
+  .ft { position: absolute; left: 648px; width: 420px; font-size: 21.5px; font-weight: 800; color: #1d2433; }
+  .fd { position: absolute; left: 648px; width: 420px; font-size: 14px; color: #56617a; line-height: 1.45; }
+  .fd .em { color: #1f6feb; font-weight: 700; }
+
+  #flow-label1 { position: absolute; left: 92px;  top: 666px; font-size: 14px; font-weight: 700; color: #c9d3e8; }
+  #flow-label2 { position: absolute; left: 428px; top: 666px; font-size: 17px; font-weight: 800; color: #fff; letter-spacing: 0.5px; }
+  #footer-note { position: absolute; right: 46px; top: 668px; font-size: 12.5px; color: #8b97b3; letter-spacing: 0.5px; }
+</style>
+</head>
+<body>
+<div id="stage">
+
+  <!-- ==================== 背景レイヤー ==================== -->
+  <div class="layer" id="layer-bg">
+    <div id="bg-body"></div>
+    <div id="bg-glow"></div>
+    <div id="bg-header"></div>
+    <div id="bg-footer"></div>
+    <div class="sp" style="left:556px; top:150px; width:26px; height:26px;"></div>
+    <div class="sp" style="left:588px; top:186px; width:14px; height:14px; opacity:.7;"></div>
+    <div class="sp" style="left:1042px; top:152px; width:18px; height:18px; opacity:.8;"></div>
+    <div class="sp" style="left:560px; top:598px; width:16px; height:16px; opacity:.7;"></div>
+    <div class="sp" style="left:1046px; top:586px; width:24px; height:24px;"></div>
+    <div class="sp" style="left:1014px; top:614px; width:13px; height:13px; opacity:.6;"></div>
+    <div class="sp" style="left:610px; top:560px; width:11px; height:11px; opacity:.5;"></div>
+  </div>
+
+  <!-- ==================== 画像レイヤー ==================== -->
+  <div class="layer" id="layer-art">
+
+    <!-- ヘッダーロゴ（アトム） -->
+    <svg id="logo" width="76" height="76" viewBox="0 0 76 76">
+      <g fill="none" stroke="#4da3ff" stroke-width="2.6">
+        <ellipse cx="38" cy="38" rx="32" ry="13"/>
+        <ellipse cx="38" cy="38" rx="32" ry="13" transform="rotate(60 38 38)"/>
+        <ellipse cx="38" cy="38" rx="32" ry="13" transform="rotate(120 38 38)"/>
+      </g>
+      <circle cx="38" cy="38" r="5.5" fill="#9fe0ff"/>
+    </svg>
+
+    <!-- バージョンバッジ土台 -->
+    <div id="badge-art"></div>
+
+    <!-- アプリ画面モックアップ -->
+    <div id="mock">
+      <div class="titlebar">
+        <div class="dot" style="background:#f85149;"></div>
+        <div class="dot" style="background:#d9a52a;"></div>
+        <div class="dot" style="background:#2ea043;"></div>
+        <span class="t">GitHub Deploy Tool</span>
+      </div>
+      <div class="steps">
+        <span class="chip done">✓ 認証</span>
+        <span class="chip done">✓ リポジトリ</span>
+        <span class="chip done">✓ フォルダ</span>
+        <span class="chip active">④ デプロイ</span>
+      </div>
+      <div class="label">デプロイするファイルを選択</div>
+      <div class="files">
+        <div class="row"><span class="cb">✓</span>📄 index.html</div>
+        <div class="row"><span class="cb">✓</span>📄 main.js</div>
+        <div class="row"><span class="cb">✓</span>📁 src</div>
+        <div class="row off"><span class="cb"></span>📁 bin<span class="ig">gitignore対象</span></div>
+        <div class="row off"><span class="cb"></span>📄 app.exe<span class="ig">gitignore対象</span></div>
+        <div class="row off"><span class="cb"></span>📄 sub/tool.exe<span class="ig">gitignore対象</span></div>
+      </div>
+      <div class="deploy">
+        <span class="btn">🚀 デプロイ実行</span>
+      </div>
+      <div class="log">
+        🚫 .gitignore対象を除外: 3件（サブフォルダ含む）<br>
+        📦 3件のファイルをステージング中...<br>
+        🚀 mainブランチへプッシュ中...<br>
+        <span class="ok">✅ デプロイ完了！</span>
+      </div>
+    </div>
+
+    <!-- 機能リストのアイコン -->
+    <div class="fchip" style="left:580px; top:182px;">🖱️</div>
+    <div class="fchip" style="left:580px; top:288px;">🚫</div>
+    <div class="fchip" style="left:580px; top:394px;">🔀</div>
+    <div class="fchip" style="left:580px; top:500px;">➕</div>
+
+    <!-- フッターのフロー図 -->
+    <span class="flow-ic" style="left:52px; top:658px;">📁</span>
+    <span class="flow-arrow" style="left:212px; top:664px;">➜</span>
+    <div id="flow-app">
+      <svg width="30" height="30" viewBox="0 0 76 76" style="margin-top:5px;">
+        <g fill="none" stroke="#4da3ff" stroke-width="4">
+          <ellipse cx="38" cy="38" rx="32" ry="13"/>
+          <ellipse cx="38" cy="38" rx="32" ry="13" transform="rotate(60 38 38)"/>
+          <ellipse cx="38" cy="38" rx="32" ry="13" transform="rotate(120 38 38)"/>
+        </g>
+        <circle cx="38" cy="38" r="7" fill="#9fe0ff"/>
+      </svg>
+    </div>
+    <span class="flow-arrow" style="left:316px; top:664px;">➜</span>
+    <svg id="flow-gh" width="34" height="34" viewBox="0 0 16 16">
+      <path fill="#ffffff" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
+    </svg>
+  </div>
+
+  <!-- ==================== 文字レイヤー ==================== -->
+  <div class="layer" id="layer-text">
+    <div id="title">GitHub <span class="b">Deploy</span> Tool</div>
+    <div id="tagline">Git コマンド不要、GUI でかんたん GitHub デプロイ</div>
+    <div id="badge-text">v1.2</div>
+
+    <div class="ft" style="top:184px;">GUI でかんたんデプロイ</div>
+    <div class="fd" style="top:216px;">認証からプッシュまで画面の順番どおりに完了。<br>Git / GitHub CLI のコマンド操作は不要です。</div>
+
+    <div class="ft" style="top:290px;">.gitignore を自動で除外</div>
+    <div class="fd" style="top:322px;"><span class="em">サブフォルダ内の exe や bin もまとめて除外。</span><br>追跡済みになった対象もリポジトリから削除できます。</div>
+
+    <div class="ft" style="top:396px;">履歴保持 / force push</div>
+    <div class="fd" style="top:428px;">リモート履歴を保持した差分デプロイと、<br>強制上書きをワンクリックで切り替え。</div>
+
+    <div class="ft" style="top:502px;">リポジトリの新規作成</div>
+    <div class="fd" style="top:534px;">Public / Private の新規作成も、<br>既存リポジトリへの差分デプロイにも対応。</div>
+
+    <span id="flow-label1">ローカルフォルダ</span>
+    <span id="flow-label2">GitHub</span>
+    <span id="footer-note">Windows 10 / 11 対応 ・ Git / GitHub CLI 連携 ・ 開発: C2H4</span>
+  </div>
+
+</div>
+
+<script>
+  //-------------------------------------------------------------------------------
+  // 指定したレイヤーだけを表示する処理（書き出しスクリプトから呼び出す）
+  //-------------------------------------------------------------------------------
+  function showLayers(names) {
+    ['bg', 'art', 'text'].forEach(function (name) {
+      document.getElementById('layer-' + name).style.visibility =
+        names.indexOf(name) >= 0 ? 'visible' : 'hidden';
+    });
+  }
+</script>
+</body>
+</html>

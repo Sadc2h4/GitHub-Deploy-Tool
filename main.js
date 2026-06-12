@@ -197,6 +197,7 @@ function createWildcardRegex(pattern) {
 
 //-------------------------------------------------------------------------------
 // .gitignoreの内容をツール独自の階層横断ルールとして判定する処理
+// （サブフォルダ内のファイルも対象。git本体が使えない場合の保険としても使用する）
 //-------------------------------------------------------------------------------
 function isIgnoredByToolRule(filePath, gitignoreContent) {
   const normalizedPath = filePath.replace(/\\/g, '/');
@@ -211,21 +212,26 @@ function isIgnoredByToolRule(filePath, gitignoreContent) {
   for (const rule of rules) {
     const negated = rule.startsWith('!');
     const rawPattern = negated ? rule.slice(1) : rule;
-    const directoryOnly = rawPattern.endsWith('/');
+    // 先頭または途中に / を含むパターンはルート相対（gitignore仕様）
+    const anchored = rawPattern.startsWith('/') ||
+      rawPattern.replace(/\/$/, '').includes('/');
     const pattern = rawPattern.replace(/^\//, '').replace(/\/$/, '');
     if (!pattern) continue;
 
     let matched = false;
-    if (directoryOnly && !pattern.includes('/')) {
-      matched = segments.includes(pattern);
-    } else if (!pattern.includes('/')) {
+    if (!anchored) {
+      // 階層を問わず、パス中のいずれかの名前（ファイル名・フォルダ名）に一致すれば対象
       const regex = pattern.includes('*') ? createWildcardRegex(pattern) : null;
       matched = segments.some(segment => regex ? regex.test(segment) : segment === pattern);
     } else {
+      // ルート相対パターンはパス全体（またはその配下）で判定
       const regex = pattern.includes('*') ? createWildcardRegex(pattern) : null;
-      matched = regex
-        ? regex.test(normalizedPath)
-        : normalizedPath === pattern || normalizedPath.startsWith(pattern + '/');
+      if (regex) {
+        matched = regex.test(normalizedPath) ||
+          segments.slice(0, -1).some((_, index) => regex.test(segments.slice(0, index + 1).join('/')));
+      } else {
+        matched = normalizedPath === pattern || normalizedPath.startsWith(pattern + '/');
+      }
     }
 
     if (matched) ignored = !negated;
@@ -337,16 +343,19 @@ function normalizeRepoListResponse(stdout) {
 
 //-------------------------------------------------------------------------------
 // 指定された複数ファイルがgitignore対象かをGit本体の判定で一括確認する処理
+// ・--no-index: 追跡済み（過去にコミット/プッシュ済み）のファイルも判定対象にする
+// ・-z: 日本語などの非ASCIIパスが引用符付きで返されて照合に失敗するのを防ぐ
+// ・リポジトリ未初期化などでgitの判定が使えない場合に備えて独自ルール判定も併用する
 //-------------------------------------------------------------------------------
 async function getGitIgnoredFiles(folderPath, filePaths) {
   if (!filePaths.length) return new Set();
 
-  const git = spawn(findGitExecutable(), ['check-ignore', '--stdin'], {
-    cwd: folderPath,
-    env: getCommandEnv()
-  });
+  const gitDetected = await new Promise(resolve => {
+    const git = spawn(findGitExecutable(), ['check-ignore', '--no-index', '--stdin', '-z'], {
+      cwd: folderPath,
+      env: getCommandEnv()
+    });
 
-  return await new Promise(resolve => {
     let stdout = '';
     git.stdout.on('data', chunk => {
       stdout += chunk.toString();
@@ -357,10 +366,27 @@ async function getGitIgnoredFiles(folderPath, filePaths) {
         resolve(new Set());
         return;
       }
-      resolve(new Set(parseLines(stdout)));
+      resolve(new Set(parseNullSeparated(stdout)));
     });
-    git.stdin.end(filePaths.join('\n') + '\n');
+    git.stdin.end(Buffer.from(filePaths.join('\0') + '\0', 'utf8'));
   });
+
+  const ignored = new Set(gitDetected);
+
+  let gitignoreContent = '';
+  try {
+    gitignoreContent = fs.readFileSync(path.join(folderPath, '.gitignore'), 'utf8');
+  } catch (_) {}
+
+  if (gitignoreContent) {
+    for (const file of filePaths) {
+      if (!ignored.has(file) && isIgnoredByToolRule(file, gitignoreContent)) {
+        ignored.add(file);
+      }
+    }
+  }
+
+  return ignored;
 }
 
 //-------------------------------------------------------------------------------
@@ -854,11 +880,17 @@ ipcMain.handle('select-folder', async () => {
   return { success: false };
 });
 
-// git初期化チェック
+//-------------------------------------------------------------------------------
+// 選択フォルダ自体がgitリポジトリのルートとして初期化済みかを確認する処理
+// （親フォルダ側のリポジトリを誤って初期化済みと判定しないようルートパスまで比較する）
+//-------------------------------------------------------------------------------
 ipcMain.handle('git-init-check', async (_, { folderPath }) => {
   try {
-    await runCommand('git status', folderPath);
-    return { success: true, initialized: true };
+    const result = await runCommand('git rev-parse --show-toplevel', folderPath);
+    const repoRoot = path.resolve(result.stdout.trim().replace(/\//g, path.sep));
+    const selectedRoot = path.resolve(folderPath);
+    const initialized = repoRoot.toLowerCase() === selectedRoot.toLowerCase();
+    return { success: true, initialized };
   } catch (e) {
     return { success: true, initialized: false };
   }
@@ -1108,7 +1140,25 @@ ipcMain.handle('git-deploy-selected', async (event, {
           event.sender.send('deploy-progress', `  ...ほか${deployFiles.length - 10}件`);
         }
       } catch (addErr) {
-        event.sender.send('deploy-progress', `  ⚠ 一括ステージングに失敗: ${formatCommandError(addErr)}`);
+        // 一括addはgitignore対象が1件でも混ざると全体が失敗するため、1件ずつ追加し直す
+        event.sender.send('deploy-progress', `  ⚠ 一括ステージングに失敗。1件ずつステージングします: ${formatCommandError(addErr)}`);
+        let stagedCount = 0;
+        const skippedFiles = [];
+        for (const file of deployFiles) {
+          try {
+            await runGitPathspecCommand(folderPath, ['add'], [file]);
+            stagedCount++;
+          } catch (_) {
+            skippedFiles.push(file);
+          }
+        }
+        event.sender.send('deploy-progress', `  ✓ ${stagedCount}件をステージング（${skippedFiles.length}件をスキップ）`);
+        skippedFiles.slice(0, 10).forEach(file => {
+          event.sender.send('deploy-progress', `  - ${file} (スキップ)`);
+        });
+        if (skippedFiles.length > 10) {
+          event.sender.send('deploy-progress', `  ...ほか${skippedFiles.length - 10}件`);
+        }
       }
     }
 
